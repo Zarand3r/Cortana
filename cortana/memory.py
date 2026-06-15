@@ -146,6 +146,41 @@ class Memory:
                            skip_reason="dropped_backpressure")
         self._conn.commit()
 
+    # --- recall ------------------------------------------------------------ #
+    _COLS = ("id", "ts", "app_name", "bundle_id", "window_title", "ocr_text",
+             "skip_reason", "summary_id")
+
+    def recall(self, query: str | None = None, *, since: str | None = None,
+               until: str | None = None, app: str | None = None,
+               limit: int = 50) -> list[dict]:
+        """Retrieve memories, newest first. Full-text when ``query`` is given (FTS5),
+        else a filtered scan. Each row carries ts + app_name as a citation (P5)."""
+        cols = ", ".join(f"c.{c}" for c in self._COLS)
+        params: list = []
+        where: list[str] = []
+
+        if query:
+            sql = (f"SELECT {cols} FROM context_fts "
+                   "JOIN context c ON c.id = context_fts.rowid "
+                   "WHERE context_fts MATCH ?")
+            params.append(query)
+        else:
+            sql = f"SELECT {cols} FROM context c WHERE 1=1"
+
+        if since is not None:
+            where.append("c.ts >= ?"); params.append(since)
+        if until is not None:
+            where.append("c.ts < ?"); params.append(until)
+        if app is not None:
+            where.append("c.app_name = ?"); params.append(app)
+        for clause in where:
+            sql += f" AND {clause}"
+        sql += " ORDER BY c.ts DESC LIMIT ?"
+        params.append(limit)
+
+        return [dict(zip(self._COLS, row))
+                for row in self._conn.execute(sql, params)]
+
     # --- introspection ----------------------------------------------------- #
     def counts(self) -> dict[str, int]:
         def n(sql: str) -> int:
