@@ -1,0 +1,32 @@
+# Cortana agent configuration.
+#
+# In-code defaults (cortana/config.py) are authoritative; every key here is
+# optional and simply overrides a default. This file ships the defaults verbatim
+# as a template — edit to taste. Deleting the file makes the agent use the
+# in-code defaults.
+
+[perception]
+interval = 30.0                 # seconds between screen captures
+ocr_languages = ["en-US"]       # Vision OCR languages
+ocr_max_chars = 6000            # truncate OCR before store and before the prompt
+read_focused_text = false       # opt-in Accessibility focused-field read (high-sensitivity)
+
+[llm]
+backend = "ollama"              # "ollama" | "mlx" | "fake"
+model = "qwen2.5:7b-instruct"   # feasible default; "qwen2.5:72b-instruct-q6_K" is opt-in
+ollama_host = "http://127.0.0.1:11434"
+batch_size = 4                  # observations summarized per LLM call
+batch_window = 60.0             # ...or flush a partial batch after this many seconds
+
+[memory]
+db_path = "~/.local_mac_context.db"
+retention_days = 90             # age bound — drop memories older than this
+max_db_gib = 2.0                # size bound — evict oldest beyond this
+queue_max = 256                 # backpressure bound on the perception->memory queue
+
+[privacy]
+excluded_bundles = [
+    "com.apple.keychainaccess",
+    "com.1password.1password",
+    "com.agilebits.onepassword7",
+]
