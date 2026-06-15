@@ -23,13 +23,15 @@ delete-after-verify, gated on the package being green.
 
 ## The steps at a glance
 
-- [ ] **Step 0 — Foundation.** `cortana/` package skeleton, `tests/` + `conftest`, `check.sh`, `requirements-dev.txt`, `pytest.ini`. Test infra only.
-- [ ] **Step 1 — Lock the contract.** `Observation` + `Semantic` dataclasses; `LLMBackend` protocol + `FakeLLMBackend` + `make_backend("fake")`. Schema/types compile + round-trip.
-- [ ] **Step 2 — Perception pure logic (Phase 2 slice).** `normalize()` → `content_hash()` → `changed()`; `build_meaning_prompt()`; `extract_meaning(batch, backend)`.
-- [ ] **Step 3 — Memory write path (Phase 1 slice A).** Fresh schema (WAL, FTS5, triggers); `remember()` storing summary once via FK; truncation; `remember_dropped()`.
-- [ ] **Step 4 — Memory recall (Phase 1 slice B).** `recall(query, since, until, app)` via FTS5 join + filters; FTS-sync-on-delete invariant.
-- [ ] **Step 5 — Memory bounds + migration (Phase 1 slice C).** `forget()`/`prune()` (age + size + orphan summaries); legacy-DB migration `user_version` 0→2.
-- [ ] **Step 6 — Golden-path integration.** perceive(fake)→change-detect→extract_meaning(fake)→remember→recall-with-citation. The spine.
+- [x] **Step 0 — Foundation.** `cortana/` package skeleton, `tests/` + `conftest`, `check.sh`, `requirements-dev.txt`, `pytest.ini`. Test infra only.
+- [x] **Step 1 — Lock the contract.** `Observation` + `Semantic` dataclasses; `FakeLLMBackend` + `make_backend("fake")`. Schema/types compile + round-trip.
+- [x] **Step 2 — Perception pure logic (Phase 2 slice).** `normalize()` → `content_hash()` → `changed()`; `build_meaning_prompt()`; `extract_meaning(batch, backend)`.
+- [x] **Step 3 — Memory write path (Phase 1 slice A).** Fresh schema (WAL, FTS5, triggers); `remember()` storing summary once via FK; truncation; `remember_dropped()`.
+- [x] **Step 4 — Memory recall (Phase 1 slice B).** `recall(query, since, until, app)` via FTS5 join + filters; FTS-sync-on-delete invariant.
+- [x] **Step 5 — Memory bounds + migration (Phase 1 slice C).** `forget()`/`prune()` (age + size + orphan summaries); legacy-DB migration `user_version` 0→2.
+- [x] **Step 6 — Golden-path integration.** perceive(fake)→change-detect→extract_meaning(fake)→remember→recall-with-citation. The spine.
+
+> **STATUS: COMPLETE.** All 6 steps green — 35 tests, hermetic (no PyObjC/Ollama). See §"Definition of done".
 
 ```
 0 ──▶ 1 ─┬─▶ 2 ─────────────┐
