@@ -123,7 +123,7 @@ def extract_meaning(batch: list[Observation], backend: LLMBackend,
 # Native sensors (macOS). Lazy imports keep this module importable without     #
 # PyObjC (P7). Not unit-tested — exercised on a real Mac via the agent loop.   #
 # --------------------------------------------------------------------------- #
-def frontmost_app() -> tuple[str, str, int | None]:
+def frontmost_app() -> tuple[str, str, int | None]:  # pragma: no cover - native macOS
     """(localized_name, bundle_id, pid) of the active application."""
     from AppKit import NSWorkspace  # lazy
 
@@ -137,7 +137,7 @@ def frontmost_app() -> tuple[str, str, int | None]:
     )
 
 
-def capture_screen():
+def capture_screen():  # pragma: no cover - native macOS (Quartz)
     """Capture the whole desktop as a CGImageRef, or None if blocked."""
     import Quartz  # lazy
 
@@ -149,7 +149,7 @@ def capture_screen():
     )
 
 
-def ocr_image(cgimage, languages: tuple[str, ...] = ("en-US",)) -> str:
+def ocr_image(cgimage, languages: tuple[str, ...] = ("en-US",)) -> str:  # pragma: no cover - native macOS (Vision)
     """Run Apple Vision OCR on a CGImage; return recognized text."""
     import Vision  # lazy
 

@@ -226,9 +226,7 @@ class Memory:
             return 0
         avg_row = size / total
         keep = int(self.max_db_bytes * 0.9 / avg_row)      # 10% headroom
-        to_delete = max(0, total - keep)
-        if to_delete == 0:
-            return 0
+        to_delete = max(0, total - keep)                   # ≥1: size>cap implies keep<total
         cur = self._conn.execute(
             "DELETE FROM context WHERE id IN "
             "(SELECT id FROM context ORDER BY ts ASC LIMIT ?)", (to_delete,))

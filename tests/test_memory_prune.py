@@ -64,6 +64,13 @@ def test_prune_keeps_fts_in_sync(tmp_path):
     mem.close()
 
 
+def test_prune_empty_db_is_safe(tmp_path):
+    # Even with an absurdly small cap, an empty DB prunes to nothing without error.
+    mem = Memory(tmp_path / "m.db", retention_days=10_000, max_db_bytes=1)
+    assert mem.prune() == 0
+    mem.close()
+
+
 def test_forget_by_timestamp(tmp_path):
     mem = Memory(tmp_path / "m.db")
     mem.remember([_obs("a", ts=_ts(10))], _sem())

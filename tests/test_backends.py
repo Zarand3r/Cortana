@@ -28,6 +28,20 @@ def test_make_backend_accepts_enum_member():
     assert isinstance(make_backend(Backend.FAKE), FakeLLMBackend)
 
 
+def test_make_backend_ollama_constructs_without_network():
+    # Constructing the Ollama backend only builds the URL/model — no request yet.
+    from cortana.backends import OllamaBackend
+
+    class _Cfg:
+        model = "qwen2.5:7b-instruct"
+        ollama_host = "http://127.0.0.1:11434"
+
+    be = make_backend("ollama", _Cfg())
+    assert isinstance(be, OllamaBackend)
+    assert be.model == "qwen2.5:7b-instruct"
+    assert be.url == "http://127.0.0.1:11434/api/generate"
+
+
 def test_fake_backend_generate_returns_canned_and_counts():
     be = FakeLLMBackend(response="canned summary")
     assert be.calls == 0

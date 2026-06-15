@@ -1,0 +1,12 @@
+[run]
+branch = True
+source = cortana
+
+[report]
+show_missing = True
+skip_covered = False
+# Lines that are never meaningfully executable in a hermetic suite.
+exclude_also =
+    raise NotImplementedError
+    @(abc\.)?abstractmethod
+    if __name__ == .__main__.:

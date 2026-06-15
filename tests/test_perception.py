@@ -63,6 +63,14 @@ def test_build_meaning_prompt_truncates_ocr():
     assert "truncated" in prompt.lower()
 
 
+def test_build_meaning_prompt_includes_focused_text():
+    obs = _obs("on screen")
+    obs.focused_text = "draft email body"
+    prompt = build_meaning_prompt([obs], max_chars=6000)
+    assert "focused field" in prompt
+    assert "draft email body" in prompt
+
+
 # --- extract_meaning (tool uses backend) ------------------------------------ #
 
 def test_extract_meaning_uses_backend():

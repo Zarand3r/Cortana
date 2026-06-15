@@ -9,3 +9,7 @@ __pycache__/
 *.db-wal
 *.db-shm
 .local_mac_context.db
+
+# Coverage artifacts
+.coverage
+htmlcov/

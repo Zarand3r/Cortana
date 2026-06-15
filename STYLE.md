@@ -136,6 +136,29 @@ cfg = Config.load("path/to.toml")    # explicit
 model = "qwen2.5:7b-instruct"
 ```
 
+## 5. Test-driven development, with a coverage ratchet
+
+**Do:** write the test first — extend or add the failing test, watch it go red,
+then implement the minimum to green. Every change to behavior ships with its tests
+in the same commit. The canonical gate is `ci/run.sh` (aliased by `check.sh`); run
+it after every significant change and treat a non-zero exit as "not done."
+
+**Don't:** add behavior without a test; lower the coverage threshold to make a
+change pass; or assert on nondeterministic output (e.g. real LLM prose) — assert on
+the deterministic contract (the retrieved rows, the call count, the stored shape)
+using a fake.
+
+**Why:** tests-first forces a verifiable success criterion before code exists, and
+a coverage ratchet keeps the suite honest as the system grows. Coverage measures
+**testable logic** — genuinely untestable native/IO code (Quartz/Vision, Ollama/MLX
+network) is marked `# pragma: no cover` *with a reason*, not left to silently drag
+the number down. Keep the threshold a one-way ratchet (raise, never lower).
+
+```bash
+./ci/run.sh            # full hermetic suite + branch coverage, fails under 95%
+./ci/run.sh -k memory  # extra pytest args pass through
+```
+
 ---
 
 ## How to iterate on this file

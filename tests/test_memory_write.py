@@ -65,6 +65,17 @@ def test_ocr_truncated_at_store(tmp_path):
     mem.close()
 
 
+def test_remember_without_summary(tmp_path):
+    mem = _open(tmp_path)
+    sid = mem.remember([_obs("a"), _obs("b")], None)   # no semantic record
+    assert sid is None
+    c = mem.counts()
+    assert c["context"] == 2
+    assert c["summaries"] == 0
+    assert all(r[0] is None for r in mem._conn.execute("SELECT summary_id FROM context"))
+    mem.close()
+
+
 def test_remember_dropped(tmp_path):
     mem = _open(tmp_path)
     mem.remember_dropped(_obs("lost frame"))

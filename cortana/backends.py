@@ -60,7 +60,7 @@ class OllamaBackend(LLMBackend):
         self.model = model
         self.timeout = timeout
 
-    def generate(self, prompt: str) -> str:
+    def generate(self, prompt: str) -> str:  # pragma: no cover - hits the network
         payload = json.dumps({
             "model": self.model,
             "prompt": prompt,
@@ -75,7 +75,7 @@ class OllamaBackend(LLMBackend):
         return (data.get("response") or "").strip()
 
 
-class MLXBackend(LLMBackend):
+class MLXBackend(LLMBackend):  # pragma: no cover - requires mlx-lm + a resident model
     """Native Apple-Silicon inference via mlx-lm. The loaded model stays resident in
     RAM as ``_model``; ``model`` remains the identifier string (the contract).
     Imported lazily so this module loads without mlx-lm installed."""
@@ -108,6 +108,6 @@ def make_backend(name: str | Backend, cfg: Config | None = None) -> LLMBackend:
             return FakeLLMBackend()
         case Backend.OLLAMA:
             return OllamaBackend(model=model, host=host)
-        case Backend.MLX:
+        case Backend.MLX:  # pragma: no cover - constructs a resident MLX model
             return MLXBackend(model=model)
-    raise AssertionError(f"unhandled backend: {backend!r}")  # unreachable
+    raise AssertionError(f"unhandled backend: {backend!r}")  # pragma: no cover

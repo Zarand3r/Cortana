@@ -4,9 +4,25 @@
 
 Follow [`STYLE.md`](STYLE.md) for this repo's code conventions (no optional/
 conditional imports, ABCs for closed contracts, enums + `match` over string
-ladders, TOML config under `config/`). The architecture and phase roadmap live in
-[`docs/DESIGN.md`](docs/DESIGN.md); the active execution plan in
-[`IMPLEMENTATION_PLAN.md`](IMPLEMENTATION_PLAN.md).
+ladders, TOML config under `config/`, test-driven development). The architecture
+and phase roadmap live in [`docs/DESIGN.md`](docs/DESIGN.md); the active execution
+plan in [`IMPLEMENTATION_PLAN.md`](IMPLEMENTATION_PLAN.md).
+
+## Verifying changes — run CI after every significant change
+
+The canonical gate is [`ci/run.sh`](ci/run.sh) (aliased by `./check.sh`). It runs
+the full hermetic test suite with branch coverage and **fails if coverage drops
+below 95%** — no PyObjC/Ollama/network needed.
+
+**After every significant change, run `./ci/run.sh` and only consider the change
+done when it exits 0.** First-time setup:
+`python3 -m venv .venv && ./.venv/bin/pip install -r requirements-dev.txt`.
+
+Work **test-first (TDD)**: write/extend the failing test, watch it go red, then
+implement to green. New behavior ships with tests in the same change; genuinely
+untestable native/IO code (Quartz/Vision/Ollama/MLX) is marked `# pragma: no
+cover` with a reason so the coverage number reflects testable logic. Do not lower
+the coverage threshold to make a change pass.
 
 ## Skills — use these automatically
 
