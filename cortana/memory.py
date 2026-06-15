@@ -100,8 +100,28 @@ class Memory:
         # Existing DB: handled in Step 5 (legacy migration).
         self._migrate_legacy()
 
-    def _migrate_legacy(self) -> None:  # filled in at Step 5
-        pass
+    def _migrate_legacy(self) -> None:
+        """Upgrade a v0 DB (denormalized `summary` per row) to v2, additively and
+        losslessly (P8): add the new columns, create the semantic table + FTS, and
+        rebuild the index over existing rows. The legacy `summary` column is kept,
+        read-only. Idempotent: a DB already at v2 is left untouched."""
+        cols = {r[1] for r in self._conn.execute("PRAGMA table_info(context)")}
+        if "summary_id" in cols:                       # already migrated
+            self._conn.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
+            self._conn.commit()
+            return
+        self._conn.execute("ALTER TABLE context ADD COLUMN content_hash TEXT")
+        self._conn.execute("ALTER TABLE context ADD COLUMN summary_id INTEGER")
+        self._conn.executescript(
+            "CREATE TABLE IF NOT EXISTS summaries ("
+            " id INTEGER PRIMARY KEY AUTOINCREMENT,"
+            " window_start_ts TEXT NOT NULL, window_end_ts TEXT NOT NULL,"
+            " summary TEXT NOT NULL, model TEXT NOT NULL, created_at TEXT NOT NULL);"
+        )
+        self._conn.executescript(_FTS_SCHEMA)
+        self._conn.execute("INSERT INTO context_fts(context_fts) VALUES('rebuild')")
+        self._conn.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
+        self._conn.commit()
 
     # --- write path -------------------------------------------------------- #
     def _truncate(self, text: str | None) -> str:
@@ -145,6 +165,65 @@ class Memory:
         self._insert_event(observation, summary_id=None,
                            skip_reason="dropped_backpressure")
         self._conn.commit()
+
+    # --- retention (P4): bounded by age, size, and orphan cleanup ---------- #
+    def _db_size(self) -> int:
+        pc = self._conn.execute("PRAGMA page_count").fetchone()[0]
+        ps = self._conn.execute("PRAGMA page_size").fetchone()[0]
+        return pc * ps
+
+    def _delete_older_than(self, cutoff_ts: str) -> int:
+        cur = self._conn.execute("DELETE FROM context WHERE ts < ?", (cutoff_ts,))
+        return cur.rowcount
+
+    def _prune_orphan_summaries(self) -> int:
+        cur = self._conn.execute(
+            "DELETE FROM summaries WHERE id NOT IN "
+            "(SELECT summary_id FROM context WHERE summary_id IS NOT NULL)"
+        )
+        return cur.rowcount
+
+    def _vacuum(self) -> None:
+        """Reclaim freed pages so size measurements reflect deletions. Must run
+        outside a transaction."""
+        self._conn.commit()
+        prev = self._conn.isolation_level
+        self._conn.isolation_level = None
+        self._conn.execute("VACUUM")
+        self._conn.isolation_level = prev
+
+    def forget(self, older_than: str) -> int:
+        """Delete every memory older than ``older_than`` (ISO ts); drop orphan
+        summaries. Returns rows removed."""
+        removed = self._delete_older_than(older_than)
+        self._prune_orphan_summaries()
+        self._conn.commit()
+        return removed
+
+    def prune(self) -> int:
+        """Enforce retention: drop rows older than ``retention_days``, then evict
+        oldest-first until under ``max_db_bytes``, then drop orphan summaries.
+        Returns total rows removed."""
+        cutoff = (datetime.now(timezone.utc)
+                  - timedelta(days=self.retention_days)).isoformat()
+        removed = self._delete_older_than(cutoff)
+        self._conn.commit()
+
+        # Size bound: evict oldest in batches, reclaiming pages so size drops.
+        while self._db_size() > self.max_db_bytes:
+            ids = [r[0] for r in self._conn.execute(
+                "SELECT id FROM context ORDER BY ts ASC LIMIT 100")]
+            if not ids:
+                break
+            placeholders = ",".join("?" * len(ids))
+            self._conn.execute(
+                f"DELETE FROM context WHERE id IN ({placeholders})", ids)
+            removed += len(ids)
+            self._vacuum()
+
+        self._prune_orphan_summaries()
+        self._conn.commit()
+        return removed
 
     # --- recall ------------------------------------------------------------ #
     _COLS = ("id", "ts", "app_name", "bundle_id", "window_title", "ocr_text",
