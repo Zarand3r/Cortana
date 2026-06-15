@@ -83,45 +83,46 @@ class Memory:
         self.migrate()
 
     # --- schema / migration ------------------------------------------------ #
+    def _user_version(self) -> int:
+        return self._conn.execute("PRAGMA user_version").fetchone()[0]
+
     def _table_exists(self, name: str) -> bool:
         return self._conn.execute(
             "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (name,)
         ).fetchone() is not None
 
     def migrate(self) -> None:
-        """Bring the DB to SCHEMA_VERSION. Fresh DB -> create; legacy v0 -> upgrade
-        additively (Step 5)."""
-        if not self._table_exists("context"):
+        """Bring the DB to SCHEMA_VERSION. No-op when already current; creates a
+        fresh schema for a new DB; upgrades a legacy v0 DB additively (P8)."""
+        if self._user_version() >= SCHEMA_VERSION:
+            return
+        if self._table_exists("context"):
+            self._upgrade_legacy()
+        else:
             self._conn.executescript(_FRESH_SCHEMA)
             self._conn.executescript(_FTS_SCHEMA)
-            self._conn.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
-            self._conn.commit()
-            return
-        # Existing DB: handled in Step 5 (legacy migration).
-        self._migrate_legacy()
+        self._conn.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
+        self._conn.commit()
 
-    def _migrate_legacy(self) -> None:
-        """Upgrade a v0 DB (denormalized `summary` per row) to v2, additively and
-        losslessly (P8): add the new columns, create the semantic table + FTS, and
-        rebuild the index over existing rows. The legacy `summary` column is kept,
-        read-only. Idempotent: a DB already at v2 is left untouched."""
+    def _upgrade_legacy(self) -> None:
+        """Additively upgrade a v0 DB (denormalized `summary` per row): add the new
+        columns, create the semantic table + FTS, and rebuild the index over existing
+        rows. Each object is guarded so a partially-applied prior run re-applies
+        cleanly; the legacy `summary` column is kept, read-only."""
         cols = {r[1] for r in self._conn.execute("PRAGMA table_info(context)")}
-        if "summary_id" in cols:                       # already migrated
-            self._conn.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
-            self._conn.commit()
-            return
-        self._conn.execute("ALTER TABLE context ADD COLUMN content_hash TEXT")
-        self._conn.execute("ALTER TABLE context ADD COLUMN summary_id INTEGER")
+        if "content_hash" not in cols:
+            self._conn.execute("ALTER TABLE context ADD COLUMN content_hash TEXT")
+        if "summary_id" not in cols:
+            self._conn.execute("ALTER TABLE context ADD COLUMN summary_id INTEGER")
         self._conn.executescript(
             "CREATE TABLE IF NOT EXISTS summaries ("
             " id INTEGER PRIMARY KEY AUTOINCREMENT,"
             " window_start_ts TEXT NOT NULL, window_end_ts TEXT NOT NULL,"
             " summary TEXT NOT NULL, model TEXT NOT NULL, created_at TEXT NOT NULL);"
         )
-        self._conn.executescript(_FTS_SCHEMA)
+        if not self._table_exists("context_fts"):
+            self._conn.executescript(_FTS_SCHEMA)
         self._conn.execute("INSERT INTO context_fts(context_fts) VALUES('rebuild')")
-        self._conn.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
-        self._conn.commit()
 
     # --- write path -------------------------------------------------------- #
     def _truncate(self, text: str | None) -> str:
@@ -201,29 +202,38 @@ class Memory:
         return removed
 
     def prune(self) -> int:
-        """Enforce retention: drop rows older than ``retention_days``, then evict
+        """Enforce retention: drop rows older than ``retention_days``, evict
         oldest-first until under ``max_db_bytes``, then drop orphan summaries.
         Returns total rows removed."""
         cutoff = (datetime.now(timezone.utc)
                   - timedelta(days=self.retention_days)).isoformat()
         removed = self._delete_older_than(cutoff)
-        self._conn.commit()
-
-        # Size bound: evict oldest in batches, reclaiming pages so size drops.
-        while self._db_size() > self.max_db_bytes:
-            ids = [r[0] for r in self._conn.execute(
-                "SELECT id FROM context ORDER BY ts ASC LIMIT 100")]
-            if not ids:
-                break
-            placeholders = ",".join("?" * len(ids))
-            self._conn.execute(
-                f"DELETE FROM context WHERE id IN ({placeholders})", ids)
-            removed += len(ids)
-            self._vacuum()
-
+        removed += self._evict_to_size_cap()
         self._prune_orphan_summaries()
         self._conn.commit()
         return removed
+
+    def _evict_to_size_cap(self) -> int:
+        """Delete the oldest rows so the DB fits under ``max_db_bytes``. Freed pages
+        aren't reclaimed until VACUUM, so rather than re-measure in a loop we estimate
+        the rows to drop from the average row size, delete in one statement, and
+        VACUUM once."""
+        size = self._db_size()
+        if size <= self.max_db_bytes:
+            return 0
+        total = self._conn.execute("SELECT count(*) FROM context").fetchone()[0]
+        if total == 0:
+            return 0
+        avg_row = size / total
+        keep = int(self.max_db_bytes * 0.9 / avg_row)      # 10% headroom
+        to_delete = max(0, total - keep)
+        if to_delete == 0:
+            return 0
+        cur = self._conn.execute(
+            "DELETE FROM context WHERE id IN "
+            "(SELECT id FROM context ORDER BY ts ASC LIMIT ?)", (to_delete,))
+        self._vacuum()
+        return cur.rowcount
 
     # --- recall ------------------------------------------------------------ #
     _COLS = ("id", "ts", "app_name", "bundle_id", "window_title", "ocr_text",
