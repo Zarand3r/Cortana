@@ -10,10 +10,8 @@ from __future__ import annotations
 import hashlib
 import re
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
 
-if TYPE_CHECKING:
-    from cortana.backends import LLMBackend
+from cortana.backends import LLMBackend
 
 
 @dataclass(slots=True)
@@ -107,7 +105,7 @@ def build_meaning_prompt(batch: list[Observation], max_chars: int) -> str:
     return "\n".join(parts)
 
 
-def extract_meaning(batch: list[Observation], backend: "LLMBackend",
+def extract_meaning(batch: list[Observation], backend: LLMBackend,
                     max_chars: int) -> Semantic:
     """Run the LLM over a batch and return its semantic record. ``backend`` is any
     `cortana.backends.LLMBackend` (sync ``generate(prompt) -> str`` + ``model``)."""

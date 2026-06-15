@@ -14,10 +14,8 @@ import json
 import urllib.request
 from abc import ABC, abstractmethod
 from enum import Enum
-from typing import TYPE_CHECKING
 
-if TYPE_CHECKING:
-    from cortana.config import Config
+from cortana.config import Config
 
 
 class Backend(str, Enum):
