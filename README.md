@@ -1,0 +1,133 @@
+# Cortana — Local macOS Context Tracker
+
+A completely local, private context-tracking agent for Apple Silicon. It samples
+your foreground app + window title, screenshots the display, OCRs it with Apple's
+native **Vision** framework, summarizes the activity with a **local LLM** (Ollama
+or `mlx-lm`), and writes everything to a local SQLite database
+(`~/.local_mac_context.db`). Nothing leaves the machine.
+
+> ⚠️ **This is a searchable log of everything on your screen.** Keep the `.db`
+> file private. The tracker auto-skips password fields and known password
+> managers, but treat the database as sensitive. It does **not** log keystrokes.
+
+---
+
+## 1. Install dependencies
+
+Use a Python 3.11+ virtual environment.
+
+```bash
+cd ~/Cortana
+python3.11 -m venv .venv
+source .venv/bin/activate
+pip install --upgrade pip
+
+# --- Required native macOS bindings (PyObjC) ---
+pip install \
+  pyobjc-core \
+  pyobjc-framework-Quartz \
+  pyobjc-framework-Vision \
+  pyobjc-framework-Cocoa
+
+# --- Optional: only if you use --read-focused-text (Accessibility API) ---
+pip install pyobjc-framework-ApplicationServices
+
+# --- LLM backend ---
+# Option A (default): Ollama — no Python deps, uses the stdlib over HTTP.
+#   Just have the server + model ready (see step 3).
+# Option B: native MLX (fastest on Apple Silicon):
+pip install mlx-lm
+```
+
+> Each `pyobjc-framework-*` wheel only pulls in the one system framework it wraps,
+> so the install stays lean — no Tesseract, no OpenCV, no heavyweight CV stack.
+> (`pip install pyobjc` would install *every* framework binding; we only need 4.)
+
+---
+
+## 2. Grant macOS permissions (one-time)
+
+macOS gates screen capture and OCR behind TCC. The **first run will silently
+produce blank screenshots** until you approve the terminal/Python host:
+
+1. **System Settings → Privacy & Security → Screen Recording** → enable your
+   terminal app (Terminal / iTerm / VS Code — whatever launches the script).
+2. Restart that terminal after toggling (the permission only takes effect for
+   newly launched processes).
+3. *(Only for `--read-focused-text`)* **Privacy & Security → Accessibility** →
+   enable the same terminal app.
+
+Without Screen Recording permission the tracker still runs, logs the app/window,
+and records a `skip_reason` of `capture_blocked_or_no_permission` — it just won't
+have OCR text.
+
+---
+
+## 3. Provide a local LLM
+
+### Ollama (default backend)
+```bash
+brew services start ollama                 # or: ollama serve
+ollama pull qwen2.5:72b-instruct-q6_K      # the model the script defaults to
+```
+
+### MLX (native, fastest)
+```bash
+# Model is auto-downloaded from Hugging Face on first use:
+python context_tracker.py --backend mlx \
+  --model mlx-community/Qwen2.5-72B-Instruct-8bit
+```
+
+---
+
+## 4. Run
+
+```bash
+# Default: Ollama backend, capture every 30s
+python context_tracker.py
+
+# Faster cadence, MLX backend, verbose logs
+python context_tracker.py --interval 15 \
+  --backend mlx --model mlx-community/Qwen2.5-72B-Instruct-8bit -v
+
+# Also capture the focused text field (needs Accessibility permission)
+python context_tracker.py --read-focused-text
+```
+
+Stop with `Ctrl-C` — the tracker drains its queue and closes the DB cleanly.
+
+### Useful flags
+| Flag | Default | Meaning |
+|------|---------|---------|
+| `--interval` | `30` | seconds between captures |
+| `--backend` | `ollama` | `ollama` or `mlx` |
+| `--model` | `qwen2.5:72b-instruct-q6_K` | ollama tag or MLX HF repo |
+| `--batch-size` | `4` | events per LLM summarization call |
+| `--batch-window` | `60` | flush a partial batch after this many seconds |
+| `--read-focused-text` | off | log focused field via Accessibility |
+| `--db` | `~/.local_mac_context.db` | SQLite path |
+
+---
+
+## 5. Query your history
+
+```bash
+sqlite3 ~/.local_mac_context.db \
+  "SELECT ts, app_name, summary FROM context
+   WHERE summary != '' ORDER BY ts DESC LIMIT 20;"
+```
+
+Schema: `context(id, ts, app_name, bundle_id, window_title, ocr_text, summary, captured, skip_reason)`.
+
+---
+
+## Notes & limitations
+- **Capture API:** uses `CGWindowListCreateImage` (Quartz) for simplicity. It is
+  deprecated on macOS 14+ in favor of **ScreenCaptureKit**; it still works with
+  Screen Recording permission. For a fully future-proof build, swap
+  `capture_main_display()` to an `SCStream`/`SCScreenshotManager` capture.
+- **Window titles** are only populated when Screen Recording permission is
+  granted; otherwise `window_title` may be empty.
+- **Concurrency:** capture+OCR, the LLM, and SQLite each run on their own
+  single-worker thread pool, fed by an `asyncio.Queue`, so a slow model never
+  stalls the capture cadence (it applies backpressure / drops oldest instead).

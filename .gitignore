@@ -1,0 +1,11 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+
+# Cortana's local memory DB (sensitive — never commit)
+*.db
+*.db-wal
+*.db-shm
+.local_mac_context.db
