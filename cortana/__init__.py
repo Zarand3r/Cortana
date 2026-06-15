@@ -1,0 +1,10 @@
+"""Cortana — a local, private, on-device perceptual agent for macOS.
+
+Package subsystems (see docs/DESIGN.md):
+  - config:     runtime configuration
+  - perception: the agent's senses (capture, OCR, change-detection, meaning extraction)
+  - backends:   LLM backends (fake / Ollama / MLX)
+  - memory:     tiered episodic + semantic memory over SQLite
+"""
+
+__all__ = ["config", "perception", "backends", "memory"]
