@@ -1,5 +1,13 @@
 # CLAUDE.md — Cortana
 
+## Engineering conventions
+
+Follow [`STYLE.md`](STYLE.md) for this repo's code conventions (no optional/
+conditional imports, ABCs for closed contracts, enums + `match` over string
+ladders, TOML config under `config/`). The architecture and phase roadmap live in
+[`docs/DESIGN.md`](docs/DESIGN.md); the active execution plan in
+[`IMPLEMENTATION_PLAN.md`](IMPLEMENTATION_PLAN.md).
+
 ## Skills — use these automatically
 
 This repo is wired to the [`eng-skills`](https://github.com/Zarand3r/claude-skills)
