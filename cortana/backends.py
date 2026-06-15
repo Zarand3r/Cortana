@@ -1,7 +1,8 @@
 """LLM backends for meaning extraction and (later) reasoning.
 
-Sync `generate(prompt) -> str` is the tool-layer seam; the Phase-3 agent loop wraps
-it in an executor. `FakeLLMBackend` makes the pipeline testable with no Ollama/MLX.
+`LLMBackend` is the contract: a sync `generate(prompt) -> str` plus a `model: str`
+identifier. The Phase-3 agent loop wraps `generate` in an executor. `FakeLLMBackend`
+makes the pipeline testable with no Ollama/MLX.
 
 Only `FakeLLMBackend` is unit-tested; `OllamaBackend`/`MLXBackend` touch the network
 / native runtime and are exercised manually (see docs/DESIGN.md verification).
@@ -11,10 +12,34 @@ from __future__ import annotations
 
 import json
 import urllib.request
-from typing import Optional
+from abc import ABC, abstractmethod
+from enum import Enum
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from cortana.config import Config
 
 
-class FakeLLMBackend:
+class Backend(str, Enum):
+    """The closed set of valid backend names — single source of truth."""
+
+    FAKE = "fake"
+    OLLAMA = "ollama"
+    MLX = "mlx"
+
+
+class LLMBackend(ABC):
+    """Contract every backend satisfies: a model identifier and sync text generation."""
+
+    model: str
+
+    @abstractmethod
+    def generate(self, prompt: str) -> str:
+        """Return the model's completion for ``prompt``."""
+        raise NotImplementedError
+
+
+class FakeLLMBackend(LLMBackend):
     """Deterministic backend for hermetic tests. Returns a canned string and
     counts calls so tests can assert how often the LLM was invoked."""
 
@@ -28,7 +53,7 @@ class FakeLLMBackend:
         return self.response
 
 
-class OllamaBackend:
+class OllamaBackend(LLMBackend):
     """Talks to a local Ollama server over HTTP. Uses only the stdlib."""
 
     def __init__(self, *, model: str, host: str = "http://127.0.0.1:11434",
@@ -52,20 +77,17 @@ class OllamaBackend:
         return (data.get("response") or "").strip()
 
 
-class MLXBackend:
-    """Native Apple-Silicon inference via mlx-lm. Model stays resident in RAM.
+class MLXBackend(LLMBackend):
+    """Native Apple-Silicon inference via mlx-lm. The loaded model stays resident in
+    RAM as ``_model``; ``model`` remains the identifier string (the contract).
     Imported lazily so this module loads without mlx-lm installed."""
 
     def __init__(self, *, model: str) -> None:
         from mlx_lm import generate, load  # lazy
 
         self._generate = generate
-        self.model_name = model
-        self.model, self.tokenizer = load(model)
-
-    @property
-    def model_id(self) -> str:
-        return self.model_name
+        self.model = model                      # identifier string (contract)
+        self._model, self.tokenizer = load(model)
 
     def generate(self, prompt: str) -> str:
         messages = [{"role": "user", "content": prompt}]
@@ -73,18 +95,21 @@ class MLXBackend:
             messages, add_generation_prompt=True, tokenize=False
         )
         return self._generate(
-            self.model, self.tokenizer, prompt=text, max_tokens=128, verbose=False
+            self._model, self.tokenizer, prompt=text, max_tokens=128, verbose=False
         ).strip()
 
 
-def make_backend(name: str, cfg: Optional[object] = None):
-    """Construct a backend by name. ``cfg`` (a Config) supplies model/host when given."""
+def make_backend(name: str | Backend, cfg: Config | None = None) -> LLMBackend:
+    """Construct a backend by name. ``cfg`` (a Config) supplies model/host when given.
+    Raises ValueError for an unknown name."""
+    backend = Backend(name)                      # raises ValueError on unknown
     model = getattr(cfg, "model", "qwen2.5:7b-instruct")
     host = getattr(cfg, "ollama_host", "http://127.0.0.1:11434")
-    if name == "fake":
-        return FakeLLMBackend()
-    if name == "ollama":
-        return OllamaBackend(model=model, host=host)
-    if name == "mlx":
-        return MLXBackend(model=model)
-    raise ValueError(f"unknown backend: {name!r}")
+    match backend:
+        case Backend.FAKE:
+            return FakeLLMBackend()
+        case Backend.OLLAMA:
+            return OllamaBackend(model=model, host=host)
+        case Backend.MLX:
+            return MLXBackend(model=model)
+    raise AssertionError(f"unhandled backend: {backend!r}")  # unreachable

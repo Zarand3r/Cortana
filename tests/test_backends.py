@@ -3,7 +3,29 @@ native/network)."""
 
 import pytest
 
-from cortana.backends import FakeLLMBackend, make_backend
+from cortana.backends import Backend, FakeLLMBackend, LLMBackend, make_backend
+
+
+def test_backend_enum_is_the_single_source_of_valid_names():
+    assert {b.value for b in Backend} == {"fake", "ollama", "mlx"}
+
+
+def test_llmbackend_is_abstract():
+    with pytest.raises(TypeError):
+        LLMBackend()  # cannot instantiate the abstract base
+
+
+def test_fake_backend_is_an_llmbackend():
+    assert isinstance(FakeLLMBackend(), LLMBackend)
+
+
+def test_make_backend_returns_llmbackend_type():
+    be = make_backend("fake")
+    assert isinstance(be, LLMBackend)
+
+
+def test_make_backend_accepts_enum_member():
+    assert isinstance(make_backend(Backend.FAKE), FakeLLMBackend)
 
 
 def test_fake_backend_generate_returns_canned_and_counts():
