@@ -149,6 +149,24 @@ def capture_screen():  # pragma: no cover - native macOS (Quartz)
     )
 
 
+def perceive(ts: str, languages: tuple[str, ...] = ("en-US",)) -> Observation:  # pragma: no cover - native macOS
+    """Compose the native sensors into one Observation: frontmost app/title +
+    screenshot + OCR. The agent loop injects a fake of this in tests, so the live
+    path stays here behind the native-only marker. Fails soft: a blocked capture
+    yields a metadata-only, uncaptured Observation."""
+    app_name, bundle_id, _pid = frontmost_app()
+    image = capture_screen()
+    if image is None:
+        return Observation(ts, app_name, bundle_id, "", "", captured=False,
+                           skip_reason="capture_blocked_or_no_permission")
+    try:
+        text = ocr_image(image, languages)
+    except Exception as exc:  # noqa: BLE001 - OCR failure is non-fatal
+        return Observation(ts, app_name, bundle_id, "", "", captured=False,
+                           skip_reason=f"ocr_error: {exc}")
+    return Observation(ts, app_name, bundle_id, "", text, captured=True)
+
+
 def ocr_image(cgimage, languages: tuple[str, ...] = ("en-US",)) -> str:  # pragma: no cover - native macOS (Vision)
     """Run Apple Vision OCR on a CGImage; return recognized text."""
     import Vision  # lazy

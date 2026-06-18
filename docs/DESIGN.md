@@ -335,6 +335,9 @@ P1–P4 before breadth.
   capture/OCR/LLM surface reframed as tools.)*
 
 ### Phase 3 — The agent loop *(perceive → meaning → memory)*
+- **Deep dive:** [`docs/AGENT_LOOP.md`](AGENT_LOOP.md) — topology, concurrency
+  substrate (plain threads vs asyncio+executors), and the path to multiple
+  producers/consumers.
 - **Capability:** Cortana's continuous, non-blocking background loop; no silent
   memory loss under load.
 - **Code:** the producer/consumer reframed as `agent_loop()` composing Phase-2 tools
