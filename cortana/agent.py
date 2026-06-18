@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import logging
 import signal
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
@@ -28,8 +27,6 @@ from cortana.perception import (
     extract_meaning,
     perceive,
 )
-
-log = logging.getLogger("cortana.agent")
 
 # Re-prune cadence for the janitor (the at-startup prune is the load-bearing one;
 # this periodic pass only matters for a long-running daemon).
@@ -100,26 +97,30 @@ class AgentLoop:
         llm_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="llm")
         db_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="db")
         amem = _AsyncMemory(self._memory, loop, db_pool)
-
-        if install_signal_handlers:  # pragma: no cover - production-only path
-            for sig in (signal.SIGINT, signal.SIGTERM):
-                with contextlib.suppress(NotImplementedError, ValueError):
-                    loop.add_signal_handler(sig, stop.set)
-
-        await amem.prune()                     # bound memory before we start growing it
-        prod = asyncio.create_task(self._producer(queue, stop, loop, capture_pool, amem, max_ticks))
-        cons = asyncio.create_task(self._consumer(queue, stop, loop, llm_pool, amem))
-        jan = asyncio.create_task(self._janitor(stop, amem))
+        tasks: list[asyncio.Task] = []
         try:
+            if install_signal_handlers:  # pragma: no cover - production-only path
+                for sig in (signal.SIGINT, signal.SIGTERM):
+                    with contextlib.suppress(NotImplementedError, ValueError):
+                        loop.add_signal_handler(sig, stop.set)
+
+            await amem.prune()                 # bound memory before we start growing it
+            prod = asyncio.create_task(self._producer(queue, stop, loop, capture_pool, amem, max_ticks))
+            cons = asyncio.create_task(self._consumer(queue, stop, loop, llm_pool, amem))
+            jan = asyncio.create_task(self._janitor(stop, amem))
+            tasks = [prod, cons, jan]
+
             await prod                          # ends on max_ticks (tests) or stop (signal)
             stop.set()
             with contextlib.suppress(asyncio.TimeoutError):
                 await asyncio.wait_for(queue.join(), timeout=cfg.batch_window + 30)
         finally:
             stop.set()
-            cons.cancel()
-            jan.cancel()
-            await asyncio.gather(cons, jan, return_exceptions=True)
+            for task in tasks:
+                task.cancel()
+            # gather retrieves results/exceptions (incl. the producer's) so none
+            # are left unretrieved, and waits for cancellation to settle.
+            await asyncio.gather(*tasks, return_exceptions=True)
             capture_pool.shutdown(wait=False, cancel_futures=True)
             llm_pool.shutdown(wait=True)
             db_pool.shutdown(wait=True)
