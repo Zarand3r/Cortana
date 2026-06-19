@@ -1,9 +1,10 @@
 """Command-line entrypoint for the Cortana agent.
 
-`python -m cortana run` starts the continuous perceive→remember loop with the live
-native sensor and the configured LLM backend. The pure parts (config building,
-validation, wiring) are unit-tested; the live run requires PyObjC + a local model,
-so it is exercised on a real Mac, not in CI.
+  python -m cortana run            start the continuous perceive→remember loop (live)
+  python -m cortana ask "<q>"      recall & reason over memory (read-only)
+
+The pure parts (config building, validation, wiring, `ask`) are unit-tested. `run`'s
+live loop needs PyObjC + a local model, so it is exercised on a real Mac, not in CI.
 """
 
 from __future__ import annotations
@@ -18,6 +19,14 @@ from cortana.agent import AgentLoop
 from cortana.backends import make_backend
 from cortana.config import Config
 from cortana.memory import Memory
+from cortana.reasoning import reason
+
+
+def _add_common(p: argparse.ArgumentParser) -> None:
+    p.add_argument("--config", help="path to a TOML config (default: config/cortana.toml)")
+    p.add_argument("--backend", help="ollama | mlx | fake")
+    p.add_argument("--model", help="ollama tag or MLX HF repo")
+    p.add_argument("--db", help="path to the memory SQLite database")
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -25,19 +34,22 @@ def _parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
 
     run_p = sub.add_parser("run", help="start the continuous perceive→remember loop")
-    run_p.add_argument("--config", help="path to a TOML config (default: config/cortana.toml)")
+    _add_common(run_p)
     run_p.add_argument("--interval", type=float, help="seconds between captures")
-    run_p.add_argument("--backend", help="ollama | mlx | fake")
-    run_p.add_argument("--model", help="ollama tag or MLX HF repo")
-    run_p.add_argument("--db", help="path to the memory SQLite database")
+
+    ask_p = sub.add_parser("ask", help="ask about your past activity")
+    ask_p.add_argument("question", help="natural-language question")
+    _add_common(ask_p)
+    ask_p.add_argument("--app", help="restrict to one app")
+    ask_p.add_argument("--since", help="ISO timestamp lower bound")
+    ask_p.add_argument("--until", help="ISO timestamp upper bound")
+    ask_p.add_argument("--limit", type=int, default=20, help="max memories to retrieve")
     return parser
 
 
-def build_config(argv=None) -> Config:
-    """Parse argv into a Config: load the TOML defaults, then apply CLI overrides."""
-    args = _parser().parse_args(argv)
+def _config_from_args(args) -> Config:
     cfg = Config.load(args.config)
-    if args.interval is not None:
+    if getattr(args, "interval", None) is not None:
         cfg.interval = args.interval
     if args.backend is not None:
         cfg.backend = args.backend
@@ -46,6 +58,11 @@ def build_config(argv=None) -> Config:
     if args.db is not None:
         cfg.db_path = Path(args.db)
     return cfg
+
+
+def build_config(argv=None) -> Config:
+    """Parse argv into a Config: load the TOML defaults, then apply CLI overrides."""
+    return _config_from_args(_parser().parse_args(argv))
 
 
 def validate(cfg: Config) -> None:
@@ -57,21 +74,47 @@ def validate(cfg: Config) -> None:
         )
 
 
-def make_loop(cfg: Config) -> tuple[AgentLoop, Memory]:
-    """Wire Memory + backend + AgentLoop from a Config (live native sensor by default)."""
-    memory = Memory(
+def open_memory(cfg: Config, *, check_same_thread: bool = True) -> Memory:
+    """Build Memory from a Config — the single place config maps onto storage."""
+    return Memory(
         cfg.db_path,
         ocr_max_chars=cfg.ocr_max_chars,
         retention_days=cfg.retention_days,
         max_db_bytes=cfg.max_db_bytes,
-        check_same_thread=False,        # all writes funnel through the loop's db executor
+        check_same_thread=check_same_thread,
     )
+
+
+def make_loop(cfg: Config) -> tuple[AgentLoop, Memory]:
+    """Wire Memory + backend + AgentLoop from a Config (live native sensor by default)."""
+    memory = open_memory(cfg, check_same_thread=False)   # writes funnel through the db executor
     backend = make_backend(cfg.backend, cfg)
     return AgentLoop(cfg, memory, backend), memory
 
 
+def cmd_ask(args) -> int:
+    cfg = _config_from_args(args)
+    backend = make_backend(cfg.backend, cfg)
+    memory = open_memory(cfg)
+    try:
+        answer = reason(args.question, memory, backend,
+                        since=args.since, until=args.until, app=args.app, limit=args.limit)
+    finally:
+        memory.close()
+    print(answer.text)
+    if answer.citations:
+        print("\nsources:")
+        for c in answer.citations:
+            print(f"  [{c['ts']}] {c['app_name']}")
+    return 0
+
+
 def main(argv=None) -> int:
-    cfg = build_config(argv)
+    args = _parser().parse_args(argv)
+    if args.command == "ask":
+        return cmd_ask(args)
+    # command == "run"
+    cfg = _config_from_args(args)
     try:
         validate(cfg)
     except ValueError as exc:

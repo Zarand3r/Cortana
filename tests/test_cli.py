@@ -52,3 +52,30 @@ def test_main_rejects_bad_interval(capsys):
     rc = main(["run", "--interval", "0"])
     assert rc == 2
     assert "interval" in capsys.readouterr().err
+
+
+def test_main_ask_prints_answer_and_citations(tmp_path, capsys):
+    from cortana.perception import Observation, Semantic
+
+    db = tmp_path / "m.db"
+    mem = Memory(db, check_same_thread=False)
+    mem.remember(
+        [Observation("2026-06-17T09:00:00+00:00", "Numbers", "com.x", "w",
+                     "quarterly budget", True)],
+        Semantic("Reviewed the budget.", "fake",
+                 "2026-06-17T09:00:00+00:00", "2026-06-17T09:00:00+00:00"))
+    mem.close()
+
+    rc = main(["ask", "budget?", "--backend", "fake", "--db", str(db)])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "fake summary" in out          # the (fake) answer
+    assert "Numbers" in out               # citation printed
+
+
+def test_main_ask_no_matches_prints_answer_only(tmp_path, capsys):
+    rc = main(["ask", "photoshop?", "--backend", "fake", "--db", str(tmp_path / "empty.db")])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "fake summary" in out
+    assert "sources:" not in out          # nothing retrieved -> no citation block

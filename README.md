@@ -28,6 +28,10 @@ ollama pull qwen2.5:7b-instruct          # the default model
 # 2. run the perceive→remember loop
 python -m cortana run                     # uses config/cortana.toml + defaults
 python -m cortana run --interval 15 --backend fake   # smoke test without a model
+
+# 3. ask about your past activity (read-only; reasons over stored memory)
+python -m cortana ask "what was I working on this morning?"
+python -m cortana ask "when did I last open the budget?" --app Numbers --since 2026-06-01
 ```
 
 Flags: `--config <toml>` · `--interval <s>` · `--backend ollama|mlx|fake` ·
