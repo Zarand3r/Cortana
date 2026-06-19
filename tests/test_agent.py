@@ -170,6 +170,21 @@ def test_collect_batch_empty_when_stopped_and_drained(make_memory):
     assert asyncio.run(scenario()) == []     # stopped + empty -> no batch
 
 
+# --- Phase 6: the loop tracks metrics --------------------------------------- #
+
+def test_metrics_reflect_a_run(make_memory):
+    sensor = ScriptedSensor([_obs("a"), _obs("a"), _obs("b", app="Mail")])
+    loop_obj = AgentLoop(_cfg(batch_size=1), make_memory(), FakeLLMBackend(), sensor)
+    _run(loop_obj, max_ticks=3)
+    m = loop_obj.metrics
+    assert m.captures == 3
+    assert m.changed == 2          # first 'a' and 'b'
+    assert m.unchanged == 1        # the duplicate 'a'
+    assert m.summarized == 2
+    assert m.llm_calls == 2
+    assert loop_obj.drops_total == m.dropped == 0
+
+
 # --- Phase 5: redaction is applied before memory (on by default) ------------ #
 
 def test_loop_redacts_secrets_before_storing(make_memory):

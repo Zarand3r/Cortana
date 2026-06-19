@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  LaunchAgent template for the Cortana agent. install.sh fills the __PYTHON__ and
+  __WORKDIR__ placeholders with your venv interpreter and repo path, then installs
+  this to ~/Library/LaunchAgents and loads it. Runs at login and restarts on crash.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.cortana.tracker</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>__PYTHON__</string>
+        <string>-m</string>
+        <string>cortana</string>
+        <string>run</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>__WORKDIR__</string>
+
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>__WORKDIR__/cortana.log</string>
+    <key>StandardErrorPath</key>
+    <string>__WORKDIR__/cortana.log</string>
+</dict>
+</plist>
