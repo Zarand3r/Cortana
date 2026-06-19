@@ -318,3 +318,88 @@ async loop — cleaner tests, single place that owns concurrency.
 common idle-churn but won't catch a progress bar or blinking cursor that changes a few
 chars. *Recommendation:* ship token-strip now (P6); the Jaccard-similarity upgrade is a
 documented v2 item, not v1.
+
+---
+
+# Phase 3 — Agent Loop (asyncio + executors)
+
+Wires the tested Memory + Perception subsystems into Cortana's continuous
+perceive→remember loop. Substrate **decided: `asyncio` + three single-worker
+`ThreadPoolExecutor`s** (capture / llm / db). Design: [`docs/AGENT_LOOP.md`](docs/AGENT_LOOP.md).
+Built test-first; the loop is driven hermetically by injecting a **fake sensor**
+(no PyObjC), the **fake backend** (no LLM), and a real `Memory` on a temp DB, with a
+`max_ticks` bound so runs are finite and deterministic.
+
+## Steps at a glance
+- [ ] **Step 7 — Sensor seam + routing decision.** `perceive()` composes the native sensors (no-cover); `plan_disposition()` is the pure changed/unchanged decision. `Memory(check_same_thread=…)` for cross-thread executor use.
+- [ ] **Step 8 — `AgentLoop` (asyncio orchestration).** Producer/consumer coroutines + executors + prune-at-startup + graceful drain; end-to-end + edge tests. (Periodic re-prune deferred to Phase 6.)
+
+```
+6 (P1&2 spine) ──▶ 7 ──▶ 8
+```
+
+## Properties to preserve (Phase 3)
+
+### P9 — The producer is never blocked by the consumer
+**Invariant:** capture proceeds on cadence even when the LLM is saturated; blocking work runs in executors, not on the event loop.
+**Proved by:** Step 8 — `test_slow_llm_does_not_stall_capture` (a deliberately slow fake backend; all `max_ticks` captures still complete and are accounted for).
+
+### P10 — No silent loss
+**Invariant:** every *changed* perception is either remembered in a batch or recorded as `dropped_backpressure`; `summarized + dropped == changed`.
+**Proved by:** Step 8 — `test_backpressure_is_visible` (tiny queue + slow consumer; reconcile counts).
+
+### P11 — Idle frames never call the LLM
+**Invariant:** runs of unchanged screens produce `unchanged` heartbeats and zero extra `extract_meaning` calls.
+**Proved by:** Step 8 — `test_idle_screens_skip_llm` (fake backend call count).
+
+### P12 — Graceful drain
+**Invariant:** after `run()` returns, the queue is fully processed (`queue.join()` completed); no enqueued perception is left unwritten.
+**Proved by:** Step 8 — `test_drains_on_stop`.
+
+## Step 7 — Sensor seam + routing decision
+
+**Goal:** the injectable sensor and the pure change-detection routing decision.
+**Why now:** isolates the one native bit and the one branchy bit so the loop in Step 8 is thin and the decision is unit-tested without asyncio.
+
+### Tests first
+- [ ] `tests/test_routing.py`: `plan_disposition(prev_hash, obs)` returns `UNCHANGED` when the normalized content repeats and `CHANGED` (with the new hash set on the obs) otherwise; clock-only churn → `UNCHANGED`.
+
+### Implementation
+- [ ] `perception.perceive(cfg, *, capture, ocr, app) -> Observation | None` composing the native sensors (defaults wired to the real fns; **`# pragma: no cover`** — native).
+- [ ] `agent.plan_disposition(prev_hash, obs) -> Disposition` (a small `Enum`) computing+assigning `content_hash` and deciding changed/unchanged.
+- [ ] `Memory(..., check_same_thread: bool = True)` so the loop can use one connection from the db executor.
+
+### Acceptance
+- [ ] `./ci/run.sh` green; `test_routing.py` passes; coverage ≥ threshold.
+
+**Depends on:** 6.
+
+## Step 8 — `AgentLoop` (asyncio orchestration)
+
+**Goal:** the running loop — producer (cadence + route + enqueue/heartbeat/dropped), consumer (batch → summarize → remember), prune at startup, graceful drain.
+**Why now:** the capability of Phase 3; everything else is in place.
+
+### Tests first
+- [ ] `tests/test_agent.py` (drive with fake sensor + fake backend + temp Memory, `max_ticks` bounded):
+  - `test_perceive_remember_recall_end_to_end` — scripted screens → memory holds them; recall returns with citation.
+  - `test_idle_screens_skip_llm` (P11) — repeats → 1 LLM call + `unchanged` heartbeats.
+  - `test_backpressure_is_visible` (P10) — `queue_max=1` + slow consumer → `drops_total` > 0 and `summarized + dropped == changed`.
+  - `test_slow_llm_does_not_stall_capture` (P9) — slow fake backend → all captures still recorded.
+  - `test_drains_on_stop` (P12) — after `run()`, `queue.join()` done, nothing unwritten.
+  - `test_janitor_prunes_on_start` — old rows gone after a run (startup prune).
+
+### Implementation
+- [ ] `cortana/agent.py`: `AgentLoop(config, memory, backend, sensor)`; `async run(max_ticks=None, install_signal_handlers=True)`; private `_producer/_consumer/_collect_batch/_route/_sleep_or_stop`; an `_AsyncMemory` wrapper funneling all writes through the db executor (single writer); drop-oldest + `remember_dropped` + `drops_total`. Signal handlers + the `max_ticks=None` production path are `# pragma: no cover`.
+
+### Integration check
+- [ ] End-to-end test green; full suite green.
+
+### Acceptance
+- [ ] `./ci/run.sh` green; P9–P12 proven; coverage ≥ threshold.
+
+**Depends on:** 7.
+
+## Definition of done (Phase 3)
+- [ ] `./ci/run.sh` green; P9–P12 pass hermetically (no PyObjC/Ollama).
+- [ ] `cortana/agent.py` runs perceive→remember continuously, non-blocking, with visible backpressure and graceful drain.
+- [ ] `context_tracker.py` still present (its retirement is a later cleanup once the loop has a real-Mac shakedown).

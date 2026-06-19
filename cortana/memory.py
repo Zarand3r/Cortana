@@ -72,12 +72,15 @@ class Memory:
     writes through one thread."""
 
     def __init__(self, path, *, ocr_max_chars: int = 6000,
-                 retention_days: int = 90, max_db_bytes: int = 2 * GIB) -> None:
+                 retention_days: int = 90, max_db_bytes: int = 2 * GIB,
+                 check_same_thread: bool = True) -> None:
         self.path = Path(path)
         self.ocr_max_chars = ocr_max_chars
         self.retention_days = retention_days
         self.max_db_bytes = max_db_bytes
-        self._conn = sqlite3.connect(self.path)
+        # The agent loop funnels every write through a single db executor thread, so
+        # it opens the connection with check_same_thread=False (access stays serial).
+        self._conn = sqlite3.connect(self.path, check_same_thread=check_same_thread)
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA foreign_keys=ON")
         self.migrate()
