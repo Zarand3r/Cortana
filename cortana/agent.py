@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import logging
 import signal
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
@@ -18,6 +19,7 @@ from enum import Enum, auto
 from cortana.backends import LLMBackend
 from cortana.config import Config
 from cortana.memory import Memory
+from cortana.metrics import Metrics
 from cortana.perception import (
     Observation,
     Semantic,
@@ -27,6 +29,12 @@ from cortana.perception import (
     perceive,
 )
 from cortana.redaction import redact_observation
+
+log = logging.getLogger("cortana.agent")
+
+# Maintenance cadences for a long-running daemon (Phase 6 — see docs/AGENT_LOOP.md).
+_METRICS_LOG_INTERVAL = 600.0       # log a metrics summary every 10 min
+_PRUNE_INTERVAL = 24 * 3600.0       # re-prune memory daily
 
 
 class Disposition(Enum):
@@ -80,7 +88,11 @@ class AgentLoop:
         # sensor: (ts) -> Observation | None. Default = the live native sensor;
         # tests inject a fake so the loop runs without PyObjC.
         self._sensor = sensor or (lambda ts: perceive(ts, config.ocr_languages))
-        self.drops_total = 0
+        self.metrics = Metrics()
+
+    @property
+    def drops_total(self) -> int:
+        return self.metrics.dropped
 
     async def run(self, *, max_ticks: int | None = None,
                   install_signal_handlers: bool = True) -> None:
@@ -103,7 +115,8 @@ class AgentLoop:
             await amem.prune()                 # bound memory before we start growing it
             prod = asyncio.create_task(self._producer(queue, stop, loop, capture_pool, amem, max_ticks))
             cons = asyncio.create_task(self._consumer(queue, stop, loop, llm_pool, amem))
-            tasks = [prod, cons]
+            maint = asyncio.create_task(self._maintenance(stop, amem))
+            tasks = [prod, cons, maint]
 
             await prod                          # ends on max_ticks (tests) or stop (signal)
             stop.set()
@@ -119,6 +132,7 @@ class AgentLoop:
             capture_pool.shutdown(wait=False, cancel_futures=True)
             llm_pool.shutdown(wait=True)
             db_pool.shutdown(wait=True)
+            log.info("cortana metrics: %s", self.metrics.render())
 
     async def _sleep_or_stop(self, stop: asyncio.Event, delay: float) -> bool:
         """Sleep up to ``delay``; return True if stop fired during the wait."""
@@ -138,6 +152,7 @@ class AgentLoop:
             obs = await loop.run_in_executor(capture_pool, self._sensor, _now_iso())
             ticks += 1
             if obs is not None:
+                self.metrics.captures += 1
                 if self._cfg.redact:
                     obs = redact_observation(obs)   # scrub secrets before store/summarize
                 prev_hash = await self._route(obs, prev_hash, queue, amem)
@@ -149,9 +164,11 @@ class AgentLoop:
     async def _route(self, obs, prev_hash, queue, amem) -> str:
         """Apply the change-detection gate and enqueue / heartbeat / drop."""
         if plan_disposition(prev_hash, obs) is Disposition.UNCHANGED:
+            self.metrics.unchanged += 1
             heartbeat = replace(obs, skip_reason="unchanged", ocr_text="")
             await amem.remember([heartbeat], None)   # dwell-time signal, no LLM
             return prev_hash
+        self.metrics.changed += 1
         try:
             queue.put_nowait(obs)
         except asyncio.QueueFull:
@@ -160,7 +177,7 @@ class AgentLoop:
             evicted = queue.get_nowait()
             queue.task_done()
             await amem.remember_dropped(evicted)
-            self.drops_total += 1
+            self.metrics.dropped += 1
             queue.put_nowait(obs)
         return obs.content_hash
 
@@ -171,8 +188,11 @@ class AgentLoop:
                 continue
             semantic: Semantic | None = None
             if any(o.captured and o.ocr_text for o in batch):
+                started = loop.time()
                 semantic = await loop.run_in_executor(
                     llm_pool, extract_meaning, batch, self._backend, self._cfg.ocr_max_chars)
+                self.metrics.record_llm(loop.time() - started)
+                self.metrics.summarized += len(batch)
             await amem.remember(batch, semantic)
             for _ in batch:
                 queue.task_done()
@@ -193,3 +213,14 @@ class AgentLoop:
             except asyncio.TimeoutError:
                 break
         return batch
+
+    async def _maintenance(self, stop, amem) -> None:  # pragma: no cover - daemon-cadence (10min/24h)
+        """Long-run upkeep: log a metrics summary periodically and re-prune daily.
+        Cadences are far longer than any hermetic test, so this is daemon-only."""
+        elapsed = 0.0
+        while not await self._sleep_or_stop(stop, _METRICS_LOG_INTERVAL):
+            log.info("cortana metrics: %s", self.metrics.render())
+            elapsed += _METRICS_LOG_INTERVAL
+            if elapsed >= _PRUNE_INTERVAL:
+                elapsed = 0.0
+                await amem.prune()

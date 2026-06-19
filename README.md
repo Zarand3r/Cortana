@@ -37,6 +37,17 @@ python -m cortana ask "what was I working on this morning?"
 python -m cortana ask "when did I last open the budget?" --app Numbers --since 2026-06-01
 ```
 
+### Run at login (launchd)
+
+To run Cortana continuously as a background agent (starts at login, restarts on
+crash, logs a metrics summary every 10 min and re-prunes daily):
+
+```bash
+./install.sh              # installs ~/Library/LaunchAgents/com.cortana.tracker.plist + loads it
+tail -f cortana.log       # watch it
+./install.sh uninstall    # stop + remove
+```
+
 Flags: `--config <toml>` · `--interval <s>` · `--backend ollama|mlx|fake` ·
 `--model <tag>` · `--db <path>`. Configuration lives in
 [`config/cortana.toml`](config/cortana.toml) (in-code defaults are authoritative;
