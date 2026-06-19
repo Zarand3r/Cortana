@@ -59,6 +59,13 @@ def test_recall_app_filter(tmp_path):
     mem.close()
 
 
+def test_recall_includes_summary_text(tmp_path):
+    mem = _seed(tmp_path)
+    hit = mem.recall(query="budget")[0]
+    assert hit["summary"] == "s"           # joined semantic text, not just summary_id
+    mem.close()
+
+
 def test_recall_orders_newest_first(tmp_path):
     mem = _seed(tmp_path)
     hits = mem.recall()

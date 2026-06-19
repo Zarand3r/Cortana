@@ -244,18 +244,20 @@ class Memory:
                until: str | None = None, app: str | None = None,
                limit: int = 50) -> list[dict]:
         """Retrieve memories, newest first. Full-text when ``query`` is given (FTS5),
-        else a filtered scan. Each row carries ts + app_name as a citation (P5)."""
-        cols = ", ".join(f"c.{c}" for c in self._COLS)
+        else a filtered scan. Each row carries ts + app_name as a citation (P5) and
+        its batch ``summary`` (semantic memory; NULL for heartbeats/dropped)."""
+        cols = ", ".join(f"c.{c}" for c in self._COLS) + ", s.summary"
+        join = " LEFT JOIN summaries s ON s.id = c.summary_id"
         params: list = []
         where: list[str] = []
 
         if query:
             sql = (f"SELECT {cols} FROM context_fts "
-                   "JOIN context c ON c.id = context_fts.rowid "
-                   "WHERE context_fts MATCH ?")
+                   "JOIN context c ON c.id = context_fts.rowid" + join +
+                   " WHERE context_fts MATCH ?")
             params.append(query)
         else:
-            sql = f"SELECT {cols} FROM context c WHERE 1=1"
+            sql = f"SELECT {cols} FROM context c{join} WHERE 1=1"
 
         if since is not None:
             where.append("c.ts >= ?"); params.append(since)
@@ -268,7 +270,8 @@ class Memory:
         sql += " ORDER BY c.ts DESC LIMIT ?"
         params.append(limit)
 
-        return [dict(zip(self._COLS, row))
+        out_cols = (*self._COLS, "summary")
+        return [dict(zip(out_cols, row))
                 for row in self._conn.execute(sql, params)]
 
     # --- introspection ----------------------------------------------------- #
