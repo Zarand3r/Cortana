@@ -1,6 +1,8 @@
 [run]
 branch = True
 source = cortana
+omit =
+    cortana/__main__.py   # entrypoint shim: `python -m cortana` -> cli.main()
 
 [report]
 show_missing = True

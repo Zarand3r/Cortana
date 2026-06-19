@@ -12,6 +12,34 @@ or `mlx-lm`), and writes everything to a local SQLite database
 
 ---
 
+## Running the agent (`cortana` package)
+
+The agent is being rebuilt as the importable, tested `cortana/` package (Memory +
+Perception + the asyncio agent loop — see [`docs/DESIGN.md`](docs/DESIGN.md)). The
+hermetic test suite runs with no native deps (`./ci/run.sh`). To run it **live on a
+Mac** you need the native bits and a local model:
+
+```bash
+# 1. native deps + a local model (one-time)
+pip install pyobjc-core pyobjc-framework-Quartz pyobjc-framework-Vision pyobjc-framework-Cocoa
+ollama pull qwen2.5:7b-instruct          # the default model
+# grant Screen Recording permission to your terminal (System Settings → Privacy)
+
+# 2. run the perceive→remember loop
+python -m cortana run                     # uses config/cortana.toml + defaults
+python -m cortana run --interval 15 --backend fake   # smoke test without a model
+```
+
+Flags: `--config <toml>` · `--interval <s>` · `--backend ollama|mlx|fake` ·
+`--model <tag>` · `--db <path>`. Configuration lives in
+[`config/cortana.toml`](config/cortana.toml) (in-code defaults are authoritative;
+the file overrides them).
+
+> The legacy single-file `context_tracker.py` (documented below) still works; the
+> `cortana` package is its principled rewrite and will replace it.
+
+---
+
 ## 1. Install dependencies
 
 Use a Python 3.11+ virtual environment.
