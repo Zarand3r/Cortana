@@ -140,6 +140,25 @@ def test_collect_batch_flushes_partial_on_window(make_memory):
     assert len(batch) == 2                   # took what was there, flushed on window
 
 
+def test_sleep_or_stop_returns_true_when_stopped(make_memory):
+    async def scenario():
+        loop = asyncio.get_running_loop()
+        stop = asyncio.Event()
+        al = AgentLoop(_cfg(), make_memory(), FakeLLMBackend(), lambda ts: None)
+        loop.call_soon(stop.set)              # stop fires during the wait
+        return await al._sleep_or_stop(stop, 5.0)
+
+    assert asyncio.run(scenario()) is True
+
+
+def test_sleep_or_stop_returns_false_on_timeout(make_memory):
+    async def scenario():
+        al = AgentLoop(_cfg(), make_memory(), FakeLLMBackend(), lambda ts: None)
+        return await al._sleep_or_stop(asyncio.Event(), 0.01)
+
+    assert asyncio.run(scenario()) is False
+
+
 def test_collect_batch_empty_when_stopped_and_drained(make_memory):
     async def scenario():
         loop = asyncio.get_running_loop()

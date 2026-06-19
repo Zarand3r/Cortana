@@ -332,7 +332,7 @@ Built test-first; the loop is driven hermetically by injecting a **fake sensor**
 
 ## Steps at a glance
 - [ ] **Step 7 — Sensor seam + routing decision.** `perceive()` composes the native sensors (no-cover); `plan_disposition()` is the pure changed/unchanged decision. `Memory(check_same_thread=…)` for cross-thread executor use.
-- [ ] **Step 8 — `AgentLoop` (asyncio orchestration).** Producer/consumer/janitor coroutines + executors + graceful drain; end-to-end + edge tests.
+- [ ] **Step 8 — `AgentLoop` (asyncio orchestration).** Producer/consumer coroutines + executors + prune-at-startup + graceful drain; end-to-end + edge tests. (Periodic re-prune deferred to Phase 6.)
 
 ```
 6 (P1&2 spine) ──▶ 7 ──▶ 8
@@ -376,7 +376,7 @@ Built test-first; the loop is driven hermetically by injecting a **fake sensor**
 
 ## Step 8 — `AgentLoop` (asyncio orchestration)
 
-**Goal:** the running loop — producer (cadence + route + enqueue/heartbeat/dropped), consumer (batch → summarize → remember), janitor (prune), graceful drain.
+**Goal:** the running loop — producer (cadence + route + enqueue/heartbeat/dropped), consumer (batch → summarize → remember), prune at startup, graceful drain.
 **Why now:** the capability of Phase 3; everything else is in place.
 
 ### Tests first
@@ -386,10 +386,10 @@ Built test-first; the loop is driven hermetically by injecting a **fake sensor**
   - `test_backpressure_is_visible` (P10) — `queue_max=1` + slow consumer → `drops_total` > 0 and `summarized + dropped == changed`.
   - `test_slow_llm_does_not_stall_capture` (P9) — slow fake backend → all captures still recorded.
   - `test_drains_on_stop` (P12) — after `run()`, `queue.join()` done, nothing unwritten.
-  - `test_janitor_prunes_on_start` — old rows gone after a run.
+  - `test_janitor_prunes_on_start` — old rows gone after a run (startup prune).
 
 ### Implementation
-- [ ] `cortana/agent.py`: `AgentLoop(config, memory, backend, sensor)`; `async run(max_ticks=None, install_signal_handlers=True)`; private `_producer/_consumer/_janitor/_collect_batch/_route`; an `_AsyncMemory` wrapper funneling all writes through the db executor (single writer); drop-oldest + `remember_dropped` + `drops_total`. Signal handlers + the `max_ticks=None` production path are `# pragma: no cover`.
+- [ ] `cortana/agent.py`: `AgentLoop(config, memory, backend, sensor)`; `async run(max_ticks=None, install_signal_handlers=True)`; private `_producer/_consumer/_collect_batch/_route/_sleep_or_stop`; an `_AsyncMemory` wrapper funneling all writes through the db executor (single writer); drop-oldest + `remember_dropped` + `drops_total`. Signal handlers + the `max_ticks=None` production path are `# pragma: no cover`.
 
 ### Integration check
 - [ ] End-to-end test green; full suite green.

@@ -18,7 +18,7 @@ remember, forever on a cadence), *not* a goal-directed LLM/ReAct agent. The LLM 
 one step *inside* a cycle, not the thing steering it. Everything below is about
 running that cycle robustly and, later, at wider scope.
 
-## 2. v1 topology — 1 producer + 1 consumer + 1 janitor (the base)
+## 2. v1 topology — 1 producer + 1 consumer (the base)
 
 ```
  PRODUCER (1 thread)            QUEUE (bounded)        CONSUMER (1 thread)
@@ -28,12 +28,15 @@ running that cycle robustly and, later, at wider scope.
    changed()? no → heartbeat (no enqueue, no LLM)
    queue full?  → Memory.remember_dropped() + drops++
 
- JANITOR (periodic): Memory.prune()
+ Startup: Memory.prune()   (periodic re-prune deferred to the Phase 6 daemon)
 ```
 
 - **Producer** = the *perceive* thread: capture + OCR → `Observation`, change-detect, enqueue.
 - **Consumer** = the *remember* thread: batch → LLM summarize → persist.
-- **Janitor** = periodic `prune()`.
+- **Prune at startup** bounds memory each run. A *periodic* re-prune only matters for
+  a >24h continuous process, so it's deferred to the Phase 6 daemon — the startup
+  prune already satisfies the bound, and building the periodic sweep now would be
+  untested machinery.
 
 **Why exactly one of each:** capture is serial and cheap (no producer parallelism
 to gain); the local LLM runs one inference at a time and SQLite wants a single

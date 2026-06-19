@@ -2,8 +2,7 @@
 
 A type-(a) perception loop on an ``asyncio`` event loop with dedicated single-worker
 ``ThreadPoolExecutor``s (capture / llm / db) so blocking native work never stalls
-cadence. Design: docs/AGENT_LOOP.md. ``AgentLoop`` lands in Step 8; this module
-starts with the pure routing decision (Step 7).
+cadence. Design: docs/AGENT_LOOP.md.
 """
 
 from __future__ import annotations
@@ -27,10 +26,6 @@ from cortana.perception import (
     extract_meaning,
     perceive,
 )
-
-# Re-prune cadence for the janitor (the at-startup prune is the load-bearing one;
-# this periodic pass only matters for a long-running daemon).
-_PRUNE_INTERVAL_SECONDS = 24 * 3600
 
 
 class Disposition(Enum):
@@ -107,8 +102,7 @@ class AgentLoop:
             await amem.prune()                 # bound memory before we start growing it
             prod = asyncio.create_task(self._producer(queue, stop, loop, capture_pool, amem, max_ticks))
             cons = asyncio.create_task(self._consumer(queue, stop, loop, llm_pool, amem))
-            jan = asyncio.create_task(self._janitor(stop, amem))
-            tasks = [prod, cons, jan]
+            tasks = [prod, cons]
 
             await prod                          # ends on max_ticks (tests) or stop (signal)
             stop.set()
@@ -196,9 +190,3 @@ class AgentLoop:
             except asyncio.TimeoutError:
                 break
         return batch
-
-    async def _janitor(self, stop, amem) -> None:
-        while not stop.is_set():  # pragma: no cover - 24h periodic re-prune (not hit in tests)
-            if await self._sleep_or_stop(stop, _PRUNE_INTERVAL_SECONDS):
-                return
-            await amem.prune()
