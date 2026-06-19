@@ -25,6 +25,7 @@ max_db_gib = 2.0                # size bound — evict oldest beyond this
 queue_max = 256                 # backpressure bound on the perception->memory queue
 
 [privacy]
+redact = true                   # scrub high-confidence secrets (keys, tokens, cards, SSNs) before store
 excluded_bundles = [
     "com.apple.keychainaccess",
     "com.1password.1password",

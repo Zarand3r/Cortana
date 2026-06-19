@@ -36,6 +36,8 @@ def _parser() -> argparse.ArgumentParser:
     run_p = sub.add_parser("run", help="start the continuous perceive→remember loop")
     _add_common(run_p)
     run_p.add_argument("--interval", type=float, help="seconds between captures")
+    run_p.add_argument("--no-redact", action="store_true",
+                       help="disable secret redaction (NOT recommended)")
 
     ask_p = sub.add_parser("ask", help="ask about your past activity")
     ask_p.add_argument("question", help="natural-language question")
@@ -57,6 +59,8 @@ def _config_from_args(args) -> Config:
         cfg.model = args.model
     if args.db is not None:
         cfg.db_path = Path(args.db)
+    if getattr(args, "no_redact", False):
+        cfg.redact = False
     return cfg
 
 

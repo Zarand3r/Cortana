@@ -6,9 +6,12 @@ native **Vision** framework, summarizes the activity with a **local LLM** (Ollam
 or `mlx-lm`), and writes everything to a local SQLite database
 (`~/.local_mac_context.db`). Nothing leaves the machine.
 
-> ⚠️ **This is a searchable log of everything on your screen.** Keep the `.db`
-> file private. The tracker auto-skips password fields and known password
-> managers, but treat the database as sensitive. It does **not** log keystrokes.
+> ⚠️ **This is a searchable log of everything on your screen.** It auto-skips
+> password fields and known password managers, and **redacts high-confidence
+> secrets** (private keys, API tokens, Luhn-valid card numbers, SSNs) before
+> writing — but treat the `.db` as sensitive. At rest it relies on **FileVault**
+> (full-disk encryption); per-database encryption (SQLCipher) is a later opt-in.
+> It does **not** log keystrokes. Disable redaction with `--no-redact` (not advised).
 
 ---
 

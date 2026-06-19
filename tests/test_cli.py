@@ -29,6 +29,11 @@ def test_build_config_applies_overrides(tmp_path):
     assert cfg.db_path == db
 
 
+def test_no_redact_flag_disables_redaction():
+    assert build_config(["run", "--no-redact"]).redact is False
+    assert build_config(["run"]).redact is True
+
+
 def test_validate_rejects_nonpositive_interval():
     with pytest.raises(ValueError):
         validate(Config(interval=0))
