@@ -26,6 +26,7 @@ from cortana.perception import (
     extract_meaning,
     perceive,
 )
+from cortana.redaction import redact_observation
 
 
 class Disposition(Enum):
@@ -137,6 +138,8 @@ class AgentLoop:
             obs = await loop.run_in_executor(capture_pool, self._sensor, _now_iso())
             ticks += 1
             if obs is not None:
+                if self._cfg.redact:
+                    obs = redact_observation(obs)   # scrub secrets before store/summarize
                 prev_hash = await self._route(obs, prev_hash, queue, amem)
             if self._cfg.interval > 0:
                 elapsed = loop.time() - started

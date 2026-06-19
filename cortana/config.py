@@ -38,7 +38,8 @@ class Config:
     max_db_bytes: int = 2 * GIB                   # size bound
     queue_max: int = 256                          # backpressure bound
 
-    # --- privacy (Phase 5; carried here so the seam is stable) ---
+    # --- privacy ---
+    redact: bool = True                           # scrub high-confidence secrets pre-store
     excluded_bundles: frozenset[str] = field(default_factory=lambda: frozenset({
         "com.apple.keychainaccess",
         "com.1password.1password",
@@ -62,6 +63,7 @@ class Config:
         ("memory", "retention_days"): ("retention_days", int),
         ("memory", "max_db_gib"): ("max_db_bytes", lambda v: int(float(v) * GIB)),
         ("memory", "queue_max"): ("queue_max", int),
+        ("privacy", "redact"): ("redact", bool),
         ("privacy", "excluded_bundles"): ("excluded_bundles", frozenset),
     }
 

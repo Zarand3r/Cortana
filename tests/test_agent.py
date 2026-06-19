@@ -170,6 +170,26 @@ def test_collect_batch_empty_when_stopped_and_drained(make_memory):
     assert asyncio.run(scenario()) == []     # stopped + empty -> no batch
 
 
+# --- Phase 5: redaction is applied before memory (on by default) ------------ #
+
+def test_loop_redacts_secrets_before_storing(make_memory):
+    sensor = ScriptedSensor([_obs("export key sk-abcdEFGH1234567890ijklMNOP now")])
+    mem, be = make_memory(), FakeLLMBackend()
+    _run(AgentLoop(_cfg(batch_size=1), mem, be, sensor), max_ticks=1)   # redact default True
+    stored = mem.recall(limit=10)[0]["ocr_text"]
+    assert "sk-abcdEFGH1234567890ijklMNOP" not in stored
+    assert "REDACTED" in stored
+
+
+def test_loop_no_redact_preserves_text(make_memory):
+    sensor = ScriptedSensor([_obs("token ghp_" + "a" * 36)])
+    cfg = _cfg(batch_size=1)
+    cfg.redact = False
+    mem, be = make_memory(), FakeLLMBackend()
+    _run(AgentLoop(cfg, mem, be, sensor), max_ticks=1)
+    assert "ghp_" in mem.recall(limit=10)[0]["ocr_text"]
+
+
 # --- P10: backpressure is visible, never silent ----------------------------- #
 
 def test_backpressure_is_visible(make_memory):
