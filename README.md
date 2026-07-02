@@ -37,6 +37,27 @@ python -m cortana ask "what was I working on this morning?"
 python -m cortana ask "when did I last open the budget?" --app Numbers --since 2026-06-01
 ```
 
+### Chat (`cortana chat`) — a local ChatGPT
+
+A private, ChatGPT-style web UI backed entirely by your **on-device** model — a
+separate surface from the perception daemon, sharing the same Ollama/MLX backends.
+Zero extra dependencies: it's the stdlib `http.server` serving one self-contained
+page that streams the reply token-by-token over Server-Sent Events. Nothing leaves
+`127.0.0.1`.
+
+```bash
+ollama serve &                            # or: brew services start ollama
+ollama pull qwen2.5:7b-instruct           # any chat model you like
+python -m cortana chat                     # then open http://127.0.0.1:8808
+python -m cortana chat --port 9000 --model qwen2.5:72b-instruct-q6_K
+python -m cortana chat --backend mlx --model mlx-community/Qwen2.5-7B-Instruct-4bit
+```
+
+Config lives under `[chat]` in [`config/cortana.toml`](config/cortana.toml)
+(`host`, `port`, `system_prompt`); flags `--port`/`--host`/`--backend`/`--model`
+override it. Multi-turn history is held in the browser and re-sent each turn — no
+conversation is written to disk.
+
 ### Run at login (launchd)
 
 To run Cortana continuously as a background agent (starts at login, restarts on

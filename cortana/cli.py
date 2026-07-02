@@ -2,6 +2,7 @@
 
   python -m cortana run            start the continuous perceive→remember loop (live)
   python -m cortana ask "<q>"      recall & reason over memory (read-only)
+  python -m cortana chat           serve a local ChatGPT-style web UI (on-device LLM)
 
 The pure parts (config building, validation, wiring, `ask`) are unit-tested. `run`'s
 live loop needs PyObjC + a local model, so it is exercised on a real Mac, not in CI.
@@ -46,6 +47,11 @@ def _parser() -> argparse.ArgumentParser:
     ask_p.add_argument("--since", help="ISO timestamp lower bound")
     ask_p.add_argument("--until", help="ISO timestamp upper bound")
     ask_p.add_argument("--limit", type=int, default=20, help="max memories to retrieve")
+
+    chat_p = sub.add_parser("chat", help="serve a local ChatGPT-style web UI")
+    _add_common(chat_p)
+    chat_p.add_argument("--port", type=int, help="port for the web UI (default 8808)")
+    chat_p.add_argument("--host", help="bind address (default 127.0.0.1)")
     return parser
 
 
@@ -61,6 +67,10 @@ def _config_from_args(args) -> Config:
         cfg.db_path = Path(args.db)
     if getattr(args, "no_redact", False):
         cfg.redact = False
+    if getattr(args, "port", None) is not None:
+        cfg.chat_port = args.port
+    if getattr(args, "host", None) is not None:
+        cfg.chat_host = args.host
     return cfg
 
 
@@ -113,10 +123,25 @@ def cmd_ask(args) -> int:
     return 0
 
 
+def cmd_chat(cfg: Config) -> int:  # pragma: no cover - binds a real socket
+    from cortana.chatapp import serve
+
+    backend = make_backend(cfg.backend, cfg)
+    url = f"http://{cfg.chat_host}:{cfg.chat_port}"
+    logging.basicConfig(level=logging.INFO,
+                        format="%(asctime)s %(levelname)-7s %(message)s", datefmt="%H:%M:%S")
+    logging.info("cortana chat: open %s  (backend=%s, model=%s)", url, cfg.backend, cfg.model)
+    serve(backend, host=cfg.chat_host, port=cfg.chat_port,
+          system_prompt=cfg.chat_system_prompt)
+    return 0
+
+
 def main(argv=None) -> int:
     args = _parser().parse_args(argv)
     if args.command == "ask":
         return cmd_ask(args)
+    if args.command == "chat":
+        return cmd_chat(_config_from_args(args))
     # command == "run"
     cfg = _config_from_args(args)
     try:

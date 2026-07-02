@@ -18,6 +18,11 @@ ollama_host = "http://127.0.0.1:11434"
 batch_size = 4                  # observations summarized per LLM call
 batch_window = 60.0             # ...or flush a partial batch after this many seconds
 
+[chat]
+host = "127.0.0.1"              # bind address for the local chat web UI (localhost only)
+port = 8808                     # open http://127.0.0.1:8808 after `cortana chat`
+system_prompt = "You are a helpful assistant running fully locally on the user's Mac. Be concise and accurate."
+
 [memory]
 db_path = "~/.local_mac_context.db"
 retention_days = 90             # age bound — drop memories older than this

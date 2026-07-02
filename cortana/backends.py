@@ -13,6 +13,8 @@ from __future__ import annotations
 import json
 import urllib.request
 from abc import ABC, abstractmethod
+from collections.abc import Iterable, Iterator
+from dataclasses import dataclass
 from enum import Enum
 
 from cortana.config import Config
@@ -26,14 +28,41 @@ class Backend(str, Enum):
     MLX = "mlx"
 
 
+class Role(str, Enum):
+    """The closed set of chat message roles (also the wire values)."""
+
+    SYSTEM = "system"
+    USER = "user"
+    ASSISTANT = "assistant"
+
+
+@dataclass(frozen=True)
+class Message:
+    """One turn in a chat conversation. ``role`` is validated against ``Role``."""
+
+    role: Role
+    content: str
+
+    def to_wire(self) -> dict[str, str]:
+        """Render as the ``{"role", "content"}`` dict the model APIs expect."""
+        return {"role": self.role.value, "content": self.content}
+
+
 class LLMBackend(ABC):
-    """Contract every backend satisfies: a model identifier and sync text generation."""
+    """Contract every backend satisfies: a model identifier, single-shot text
+    generation (used by the perception pipeline), and streaming multi-turn chat
+    (used by the local chat app)."""
 
     model: str
 
     @abstractmethod
     def generate(self, prompt: str) -> str:
         """Return the model's completion for ``prompt``."""
+        raise NotImplementedError
+
+    @abstractmethod
+    def chat(self, messages: Iterable[Message]) -> Iterator[str]:
+        """Stream the assistant's reply to a multi-turn conversation, token by token."""
         raise NotImplementedError
 
 
@@ -50,13 +79,23 @@ class FakeLLMBackend(LLMBackend):
         self.calls += 1
         return self.response
 
+    def chat(self, messages: Iterable[Message]) -> Iterator[str]:
+        """Yield the canned response as whitespace-delimited tokens (so streaming
+        behaviour is exercised) and count the call."""
+        self.calls += 1
+        words = self.response.split()
+        for i, word in enumerate(words):
+            yield word if i == 0 else " " + word
+
 
 class OllamaBackend(LLMBackend):
     """Talks to a local Ollama server over HTTP. Uses only the stdlib."""
 
     def __init__(self, *, model: str, host: str = "http://127.0.0.1:11434",
                  timeout: float = 120.0) -> None:
-        self.url = host.rstrip("/") + "/api/generate"
+        self.host = host.rstrip("/")
+        self.url = self.host + "/api/generate"
+        self.chat_url = self.host + "/api/chat"
         self.model = model
         self.timeout = timeout
 
@@ -73,6 +112,27 @@ class OllamaBackend(LLMBackend):
         with urllib.request.urlopen(req, timeout=self.timeout) as resp:
             data = json.loads(resp.read().decode("utf-8"))
         return (data.get("response") or "").strip()
+
+    def chat(self, messages: Iterable[Message]) -> Iterator[str]:  # pragma: no cover - hits the network
+        payload = json.dumps({
+            "model": self.model,
+            "messages": [m.to_wire() for m in messages],
+            "stream": True,
+        }).encode("utf-8")
+        req = urllib.request.Request(
+            self.chat_url, data=payload, headers={"Content-Type": "application/json"}
+        )
+        with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+            for line in resp:                       # one JSON object per line
+                line = line.strip()
+                if not line:
+                    continue
+                chunk = json.loads(line)
+                token = chunk.get("message", {}).get("content", "")
+                if token:
+                    yield token
+                if chunk.get("done"):
+                    break
 
 
 class MLXBackend(LLMBackend):  # pragma: no cover - requires mlx-lm + a resident model
@@ -95,6 +155,17 @@ class MLXBackend(LLMBackend):  # pragma: no cover - requires mlx-lm + a resident
         return self._generate(
             self._model, self.tokenizer, prompt=text, max_tokens=128, verbose=False
         ).strip()
+
+    def chat(self, messages: Iterable[Message]) -> Iterator[str]:
+        from mlx_lm import stream_generate  # lazy: keep this module importable without mlx-lm
+
+        text = self.tokenizer.apply_chat_template(
+            [m.to_wire() for m in messages], add_generation_prompt=True, tokenize=False
+        )
+        for response in stream_generate(
+            self._model, self.tokenizer, prompt=text, max_tokens=1024
+        ):
+            yield response.text
 
 
 def make_backend(name: str | Backend, cfg: Config | None = None) -> LLMBackend:

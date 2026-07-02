@@ -34,6 +34,16 @@ def test_no_redact_flag_disables_redaction():
     assert build_config(["run"]).redact is True
 
 
+def test_chat_config_defaults_and_overrides():
+    cfg = build_config(["chat"])
+    assert cfg.chat_host == "127.0.0.1"
+    assert cfg.chat_port == 8808
+    over = build_config(["chat", "--port", "9000", "--host", "0.0.0.0", "--backend", "fake"])
+    assert over.chat_port == 9000
+    assert over.chat_host == "0.0.0.0"
+    assert over.backend == "fake"
+
+
 def test_validate_rejects_nonpositive_interval():
     with pytest.raises(ValueError):
         validate(Config(interval=0))

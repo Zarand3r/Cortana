@@ -32,6 +32,14 @@ class Config:
     batch_size: int = 4                           # observations per extract_meaning call
     batch_window: float = 60.0                    # ...or flush after this many seconds
 
+    # --- chat app (local ChatGPT-style web UI) ---
+    chat_host: str = "127.0.0.1"                  # bind address — localhost only
+    chat_port: int = 8808                         # web UI port
+    chat_system_prompt: str = (
+        "You are a helpful assistant running fully locally on the user's Mac. "
+        "Be concise and accurate."
+    )
+
     # --- memory ---
     db_path: Path = field(default_factory=lambda: Path.home() / ".local_mac_context.db")
     retention_days: int = 90                      # age bound
@@ -59,6 +67,9 @@ class Config:
         ("llm", "ollama_host"): ("ollama_host", str),
         ("llm", "batch_size"): ("batch_size", int),
         ("llm", "batch_window"): ("batch_window", float),
+        ("chat", "host"): ("chat_host", str),
+        ("chat", "port"): ("chat_port", int),
+        ("chat", "system_prompt"): ("chat_system_prompt", str),
         ("memory", "db_path"): ("db_path", lambda v: Path(v).expanduser()),
         ("memory", "retention_days"): ("retention_days", int),
         ("memory", "max_db_gib"): ("max_db_bytes", lambda v: int(float(v) * GIB)),
