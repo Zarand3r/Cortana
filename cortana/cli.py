@@ -52,6 +52,14 @@ def _parser() -> argparse.ArgumentParser:
     _add_common(chat_p)
     chat_p.add_argument("--port", type=int, help="port for the web UI (default 8808)")
     chat_p.add_argument("--host", help="bind address (default 127.0.0.1)")
+
+    desk_p = sub.add_parser("desktop", help="run the Cortana menu-bar desktop app")
+    _add_common(desk_p)
+    desk_p.add_argument("--port", type=int, help="port for the chat server (default 8808)")
+    desk_p.add_argument("--host", help="bind address (default 127.0.0.1)")
+
+    win_p = sub.add_parser("chat-window", help="(internal) open the chat window")
+    win_p.add_argument("--url", required=True, help="chat server URL to display")
     return parser
 
 
@@ -149,6 +157,13 @@ def main(argv=None) -> int:
         return cmd_ask(args)
     if args.command == "chat":
         return cmd_chat(_config_from_args(args))
+    if args.command == "desktop":  # pragma: no cover - native menu-bar app
+        from cortana.desktop import run_app
+        return run_app(_config_from_args(args))
+    if args.command == "chat-window":  # pragma: no cover - native webview
+        from cortana.desktop import run_chat_window
+        run_chat_window(args.url)
+        return 0
     # command == "run"
     cfg = _config_from_args(args)
     try:

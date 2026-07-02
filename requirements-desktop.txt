@@ -1,0 +1,17 @@
+# Desktop app dependencies (macOS). The core agent + chat run on the stdlib; these
+# are only needed to run/build the menu-bar .app shell.
+rumps>=0.4            # menu-bar app framework
+pywebview>=5          # native WKWebView window for the chat UI
+
+# Native perception (also needed by `cortana run`):
+pyobjc-core
+pyobjc-framework-Quartz
+pyobjc-framework-Vision
+pyobjc-framework-Cocoa
+
+# Build/packaging (only for producing the .app bundle):
+py2app>=0.28
+
+# LLM backend: install ONE of these separately —
+#   Ollama  : no Python dep (talk to the local server); `ollama pull qwen2.5:7b-instruct`
+#   MLX     : pip install mlx-lm

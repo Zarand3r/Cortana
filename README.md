@@ -37,13 +37,16 @@ python -m cortana ask "what was I working on this morning?"
 python -m cortana ask "when did I last open the budget?" --app Numbers --since 2026-06-01
 ```
 
-### Chat (`cortana chat`) — a local ChatGPT
+### Chat (`cortana chat`) — a local ChatGPT, aware of your activity
 
-A private, ChatGPT-style web UI backed entirely by your **on-device** model — a
-separate surface from the perception daemon, sharing the same Ollama/MLX backends.
-Zero extra dependencies: it's the stdlib `http.server` serving one self-contained
-page that streams the reply token-by-token over Server-Sent Events. Nothing leaves
-`127.0.0.1`.
+A private, ChatGPT-style web UI backed entirely by your **on-device** model,
+sharing the same Ollama/MLX backends. Zero extra dependencies: it's the stdlib
+`http.server` serving one self-contained page that streams the reply
+token-by-token over Server-Sent Events. Nothing leaves `127.0.0.1`.
+
+When launched via the CLI it is **memory-backed**: each turn retrieves your
+relevant recent screen activity and grounds the answer in it (ask *"what was I just
+working on?"* and it knows). Pass no memory for a plain assistant.
 
 ```bash
 ollama serve &                            # or: brew services start ollama
@@ -57,6 +60,21 @@ Config lives under `[chat]` in [`config/cortana.toml`](config/cortana.toml)
 (`host`, `port`, `system_prompt`); flags `--port`/`--host`/`--backend`/`--model`
 override it. Multi-turn history is held in the browser and re-sent each turn — no
 conversation is written to disk.
+
+### Desktop app (`cortana desktop`) — menu-bar shell
+
+Runs Cortana as a macOS **menu-bar app** so one signed `.app` bundle owns the
+Screen Recording / Accessibility permissions and hosts perception + chat +
+inference together. Menu: ▶/⏸ tracking, Open Chat (native window), Quit.
+
+```bash
+pip install -r requirements-desktop.txt    # rumps + pywebview + pyobjc
+python -m cortana desktop                   # run from source
+python setup.py py2app                       # build dist/Cortana.app (see docs/DESKTOP.md)
+```
+
+Architecture, the event-loop decision, and signing/notarization:
+[`docs/DESKTOP.md`](docs/DESKTOP.md).
 
 ### Run at login (launchd)
 
