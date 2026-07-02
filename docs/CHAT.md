@@ -55,8 +55,11 @@ built to honor the repo's standing constraints:
   re-sent on every turn. Closing the tab discards it. (Rationale in §7.)
 - **No authentication / multi-user.** It binds `127.0.0.1`; the trust boundary is
   "processes on this Mac."
-- **No RAG over Cortana's memory yet.** It is a clean assistant. The hook to add
-  screen-memory recall is documented in §9.1.
+- **RAG over Cortana's memory: now built.** When `cortana chat` is launched with a
+  memory DB, each turn retrieves the user's relevant recent screen activity and
+  injects it into the system prompt, so answers are grounded in what they've been
+  doing (see §9.1). Passing `memory=None` to `route`/`serve` still gives the plain
+  clean-assistant behavior.
 - **No token/亿-level context management, no tool-calling, no file uploads.** It
   is a faithful minimal ChatGPT, not a superset.
 

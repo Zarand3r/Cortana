@@ -127,12 +127,19 @@ def cmd_chat(cfg: Config) -> int:  # pragma: no cover - binds a real socket
     from cortana.chatapp import serve
 
     backend = make_backend(cfg.backend, cfg)
+    # Read-only recall over memory; single-user/low-concurrency, so one shared
+    # connection (check_same_thread=False) across the threading server is fine.
+    memory = open_memory(cfg, check_same_thread=False)
     url = f"http://{cfg.chat_host}:{cfg.chat_port}"
     logging.basicConfig(level=logging.INFO,
                         format="%(asctime)s %(levelname)-7s %(message)s", datefmt="%H:%M:%S")
-    logging.info("cortana chat: open %s  (backend=%s, model=%s)", url, cfg.backend, cfg.model)
-    serve(backend, host=cfg.chat_host, port=cfg.chat_port,
-          system_prompt=cfg.chat_system_prompt)
+    logging.info("cortana chat: open %s  (backend=%s, model=%s, memory=%s)",
+                 url, cfg.backend, cfg.model, cfg.db_path)
+    try:
+        serve(backend, host=cfg.chat_host, port=cfg.chat_port,
+              system_prompt=cfg.chat_system_prompt, memory=memory)
+    finally:
+        memory.close()
     return 0
 
 

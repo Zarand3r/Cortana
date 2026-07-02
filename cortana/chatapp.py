@@ -20,14 +20,51 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from cortana.backends import LLMBackend, Message, Role
+from cortana.memory import Memory
+from cortana.reasoning import question_to_fts
 
 # The single-page UI ships next to this module so it can be edited as plain HTML.
 INDEX_PATH = Path(__file__).resolve().parent / "webui" / "index.html"
+
+_CONTEXT_PER_MEMORY_CHARS = 400   # cap each memory in the context block
 
 
 def load_index() -> str:
     """Return the chat UI's HTML. Read fresh so edits show up without a restart."""
     return INDEX_PATH.read_text(encoding="utf-8")
+
+
+# --------------------------------------------------------------------------- #
+# Memory context — make the chat aware of what the user has been doing.        #
+# The latest user turn drives retrieval over Cortana's own screen-memory; the  #
+# results are injected into the system prompt so answers are grounded + cited. #
+# --------------------------------------------------------------------------- #
+def latest_user_text(history: Iterable[Message]) -> str:
+    """The most recent user turn's content (drives retrieval), or '' if none."""
+    for msg in reversed(list(history)):
+        if msg.role is Role.USER:
+            return msg.content
+    return ""
+
+
+def retrieve_context(memory: Memory, query: str, *, limit: int = 8) -> list[dict]:
+    """Recall memories relevant to ``query`` (full-text on its content words;
+    falls back to most-recent when the query has no signal — useful for
+    'what should I do next?')."""
+    return memory.recall(query=question_to_fts(query), limit=limit)
+
+
+def format_context_block(memories: list[dict]) -> str:
+    """Render retrieved memories into a system-prompt context block, or '' when
+    there are none."""
+    if not memories:
+        return ""
+    lines = ["--- CONTEXT: THE USER'S RECENT SCREEN ACTIVITY "
+             "(cite the time + app if you rely on it) ---"]
+    for m in memories:
+        body = (m.get("summary") or m.get("ocr_text") or "").strip().replace("\n", " ")
+        lines.append(f"[{m['ts']}] app={m['app_name']!r}: {body[:_CONTEXT_PER_MEMORY_CHARS]}")
+    return "\n".join(lines)
 
 
 def parse_chat_request(body: bytes) -> list[Message]:
@@ -55,13 +92,19 @@ def parse_chat_request(body: bytes) -> list[Message]:
     return messages
 
 
-def build_messages(history: Iterable[Message], system_prompt: str) -> list[Message]:
-    """Prepend the system prompt to the conversation, unless the client already
-    sent a system turn of its own."""
+def build_messages(history: Iterable[Message], system_prompt: str,
+                   context_block: str = "") -> list[Message]:
+    """Assemble the conversation with a system prompt, folding in an optional
+    memory ``context_block``. Respects a client-supplied system turn (augmenting
+    it with context rather than duplicating)."""
     history = list(history)
     if history and history[0].role is Role.SYSTEM:
+        if context_block:
+            head = Message(Role.SYSTEM, f"{history[0].content}\n\n{context_block}")
+            return [head, *history[1:]]
         return history
-    return [Message(Role.SYSTEM, system_prompt), *history]
+    system = f"{system_prompt}\n\n{context_block}" if context_block else system_prompt
+    return [Message(Role.SYSTEM, system), *history]
 
 
 def sse_frames(tokens: Iterable[str]) -> Iterator[bytes]:
@@ -83,9 +126,11 @@ class Response:
 
 
 def route(method: str, path: str, body: bytes, backend: LLMBackend,
-          *, system_prompt: str, index_html: str) -> Response:
+          *, system_prompt: str, index_html: str,
+          memory: Memory | None = None, context_limit: int = 8) -> Response:
     """Map a request to a Response. Pure: no sockets, no globals — the whole
-    server contract lives here so it can be tested directly."""
+    server contract lives here so it can be tested directly. When ``memory`` is
+    given, the reply is grounded in the user's recent screen activity."""
     if method == "GET" and path in ("/", "/index.html"):
         return Response(200, "text/html; charset=utf-8", [index_html.encode("utf-8")])
     if method == "POST" and path == "/api/chat":
@@ -94,7 +139,12 @@ def route(method: str, path: str, body: bytes, backend: LLMBackend,
         except ValueError as exc:
             payload = json.dumps({"error": str(exc)}).encode("utf-8")
             return Response(400, "application/json", [payload])
-        messages = build_messages(history, system_prompt)
+        context_block = ""
+        if memory is not None:
+            memories = retrieve_context(memory, latest_user_text(history),
+                                        limit=context_limit)
+            context_block = format_context_block(memories)
+        messages = build_messages(history, system_prompt, context_block)
         return Response(200, "text/event-stream", sse_frames(backend.chat(messages)))
     return Response(404, "text/plain; charset=utf-8", [b"not found"])
 
@@ -106,12 +156,14 @@ class ChatHandler(BaseHTTPRequestHandler):  # pragma: no cover - native socket I
     backend: LLMBackend
     system_prompt: str
     index_html: str
+    memory: Memory | None = None
 
     def _dispatch(self, method: str) -> None:
         length = int(self.headers.get("Content-Length") or 0)
         body = self.rfile.read(length) if length else b""
         resp = route(method, self.path, body, self.backend,
-                     system_prompt=self.system_prompt, index_html=self.index_html)
+                     system_prompt=self.system_prompt, index_html=self.index_html,
+                     memory=self.memory)
         self.send_response(resp.status)
         self.send_header("Content-Type", resp.content_type)
         if resp.content_type == "text/event-stream":
@@ -134,8 +186,8 @@ class ChatHandler(BaseHTTPRequestHandler):  # pragma: no cover - native socket I
         pass                                         # keep the console quiet
 
 
-def make_handler(backend: LLMBackend, *, system_prompt: str,
-                 index_html: str) -> type[ChatHandler]:
+def make_handler(backend: LLMBackend, *, system_prompt: str, index_html: str,
+                 memory: Memory | None = None) -> type[ChatHandler]:
     """Build a ChatHandler subclass bound to this backend/config (the stdlib
     server instantiates the class per request, so config rides on the type)."""
 
@@ -145,13 +197,17 @@ def make_handler(backend: LLMBackend, *, system_prompt: str,
     _Bound.backend = backend
     _Bound.system_prompt = system_prompt
     _Bound.index_html = index_html
+    _Bound.memory = memory
     return _Bound
 
 
 def serve(backend: LLMBackend, *, host: str = "127.0.0.1", port: int = 8808,
-          system_prompt: str) -> None:  # pragma: no cover - binds a real socket
-    """Run the chat web server until interrupted."""
-    handler = make_handler(backend, system_prompt=system_prompt, index_html=load_index())
+          system_prompt: str,
+          memory: Memory | None = None) -> None:  # pragma: no cover - binds a real socket
+    """Run the chat web server until interrupted. When ``memory`` is given, replies
+    are grounded in the user's recent screen activity."""
+    handler = make_handler(backend, system_prompt=system_prompt,
+                           index_html=load_index(), memory=memory)
     server = ThreadingHTTPServer((host, port), handler)
     try:
         server.serve_forever()
