@@ -20,6 +20,7 @@ from cortana.agent import AgentLoop
 from cortana.backends import make_backend
 from cortana.config import Config
 from cortana.memory import Memory
+from cortana.perception import make_demo_sensor
 from cortana.reasoning import reason
 
 
@@ -39,6 +40,11 @@ def _parser() -> argparse.ArgumentParser:
     run_p.add_argument("--interval", type=float, help="seconds between captures")
     run_p.add_argument("--no-redact", action="store_true",
                        help="disable secret redaction (NOT recommended)")
+    run_p.add_argument("--ticks", type=int,
+                       help="stop after N capture cycles (default: run forever)")
+    run_p.add_argument("--demo", action="store_true",
+                       help="use a synthetic sensor (no screen capture / PyObjC) — "
+                            "for deps-free local testing; pair with --backend fake")
 
     ask_p = sub.add_parser("ask", help="ask about your past activity")
     ask_p.add_argument("question", help="natural-language question")
@@ -67,6 +73,8 @@ def _config_from_args(args) -> Config:
     cfg = Config.load(args.config)
     if getattr(args, "interval", None) is not None:
         cfg.interval = args.interval
+    elif getattr(args, "demo", False):
+        cfg.interval = 0.05          # bounded demo runs go fast; live runs use the config cadence
     if args.backend is not None:
         cfg.backend = args.backend
     if args.model is not None:
@@ -107,11 +115,12 @@ def open_memory(cfg: Config, *, check_same_thread: bool = True) -> Memory:
     )
 
 
-def make_loop(cfg: Config) -> tuple[AgentLoop, Memory]:
-    """Wire Memory + backend + AgentLoop from a Config (live native sensor by default)."""
+def make_loop(cfg: Config, *, sensor=None) -> tuple[AgentLoop, Memory]:
+    """Wire Memory + backend + AgentLoop from a Config. ``sensor`` overrides the
+    live native sensor (e.g. the demo sensor for deps-free local runs)."""
     memory = open_memory(cfg, check_same_thread=False)   # writes funnel through the db executor
     backend = make_backend(cfg.backend, cfg)
-    return AgentLoop(cfg, memory, backend), memory
+    return AgentLoop(cfg, memory, backend, sensor), memory
 
 
 def cmd_ask(args) -> int:
@@ -171,17 +180,20 @@ def main(argv=None) -> int:
     except ValueError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
-    return _serve(cfg)  # pragma: no cover - live run requires the native sensor
+    sensor = make_demo_sensor() if getattr(args, "demo", False) else None
+    return _serve(cfg, sensor=sensor, max_ticks=getattr(args, "ticks", None))
 
 
-def _serve(cfg: Config) -> int:  # pragma: no cover - live run requires the native sensor
+def _serve(cfg: Config, *, sensor=None,
+           max_ticks=None) -> int:  # pragma: no cover - live run requires the native sensor
     logging.basicConfig(level=logging.INFO,
                         format="%(asctime)s %(levelname)-7s %(message)s", datefmt="%H:%M:%S")
-    loop_obj, memory = make_loop(cfg)
-    logging.info("cortana: tracking every %.0fs -> %s (backend=%s, model=%s)",
-                 cfg.interval, cfg.db_path, cfg.backend, cfg.model)
+    loop_obj, memory = make_loop(cfg, sensor=sensor)
+    mode = "demo sensor" if sensor is not None else "live sensor"
+    logging.info("cortana: tracking every %.0fs -> %s (backend=%s, model=%s, %s)",
+                 cfg.interval, cfg.db_path, cfg.backend, cfg.model, mode)
     try:
-        asyncio.run(loop_obj.run())
+        asyncio.run(loop_obj.run(max_ticks=max_ticks))
     except KeyboardInterrupt:
         pass
     finally:

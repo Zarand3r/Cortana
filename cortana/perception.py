@@ -120,6 +120,38 @@ def extract_meaning(batch: list[Observation], backend: LLMBackend,
 
 
 # --------------------------------------------------------------------------- #
+# Synthetic sensor — for deps-free local runs / demos (no PyObjC, no model).   #
+# --------------------------------------------------------------------------- #
+_DEMO_SCREENS: list[tuple[str, str, str]] = [
+    ("Visual Studio Code", "agent.py — Cortana",
+     "class AgentLoop: async def run(self): perceive -> remember loop"),
+    ("Google Chrome", "SQLite FTS5 — full-text search",
+     "external content tables keep the index in sync via triggers; MATCH queries"),
+    ("Mail", "Inbox — 2 unread",
+     "Subject: Q3 budget review  From: finance@company.com  Please review by Friday"),
+    ("Terminal", "cortana — zsh",
+     "$ python -m cortana ask 'what was I doing'  145 passed"),
+]
+
+
+def make_demo_sensor(scripts: list[tuple[str, str, str]] | None = None):
+    """Return a sensor ``(ts) -> Observation`` that cycles through scripted
+    (app, window_title, ocr_text) screens. Lets the full loop run with no PyObjC
+    and no model (``cortana run --demo --backend fake``) for local testing."""
+    screens = scripts or _DEMO_SCREENS
+    state = {"i": 0}
+
+    def sensor(ts: str) -> Observation:
+        app, title, ocr = screens[state["i"] % len(screens)]
+        state["i"] += 1
+        return Observation(ts=ts, app_name=app,
+                           bundle_id=f"com.demo.{app.split()[0].lower()}",
+                           window_title=title, ocr_text=ocr, captured=True)
+
+    return sensor
+
+
+# --------------------------------------------------------------------------- #
 # Native sensors (macOS). Lazy imports keep this module importable without     #
 # PyObjC (P7). Not unit-tested — exercised on a real Mac via the agent loop.   #
 # --------------------------------------------------------------------------- #
