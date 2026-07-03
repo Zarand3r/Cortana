@@ -4,7 +4,7 @@ import sqlite3
 
 from cortana.memory import Memory
 
-# The v0 schema shipped by context_tracker.py (denormalized summary per row).
+# The legacy v0 schema (denormalized summary per row) we migrate away from.
 _LEGACY_SCHEMA = """
 CREATE TABLE context (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,

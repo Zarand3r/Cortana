@@ -6,11 +6,12 @@ from cortana.desktop import DesktopController
 
 
 def _controller():
-    calls = {"start": 0, "stop": 0, "chat": 0}
+    calls = {"start": 0, "stop": 0, "chat": 0, "rec": 0}
     ctl = DesktopController(
         start_tracking=lambda: calls.__setitem__("start", calls["start"] + 1),
         stop_tracking=lambda: calls.__setitem__("stop", calls["stop"] + 1),
         open_chat=lambda: calls.__setitem__("chat", calls["chat"] + 1),
+        show_recommendation=lambda: calls.__setitem__("rec", calls["rec"] + 1),
     )
     return ctl, calls
 
@@ -60,6 +61,12 @@ def test_open_chat_invokes_callable():
     ctl, calls = _controller()
     ctl.open_chat()
     assert calls["chat"] == 1
+
+
+def test_recommend_invokes_callable():
+    ctl, calls = _controller()
+    ctl.recommend()
+    assert calls["rec"] == 1
 
 
 def test_tracking_label_reflects_state():

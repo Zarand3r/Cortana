@@ -35,10 +35,10 @@ chat bubble.
 
 ### 1.2 Why it is shaped this way
 
-Cortana's perception daemon is deliberately headless — its design says *"No GUI…
-no server. Ever."* ([`DESIGN.md` §Non-Goals](DESIGN.md)). The chat app is a
-**separate surface**, not part of that daemon, so that rule is preserved. It was
-built to honor the repo's standing constraints:
+Cortana is one product with several surfaces around a shared memory. The chat UI is
+**a distinct surface of that one app** (a browser/web window), kept decoupled from
+the headless perception loop but reading the same memory it writes. It honors the
+repo's standing constraints:
 
 | Constraint (from `STYLE.md` / `DESIGN.md`) | How chat honors it |
 |---|---|

@@ -16,6 +16,7 @@ import logging
 import sys
 from pathlib import Path
 
+from cortana.advisor import recommend
 from cortana.agent import AgentLoop
 from cortana.backends import make_backend
 from cortana.config import Config
@@ -33,7 +34,8 @@ def _add_common(p: argparse.ArgumentParser) -> None:
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="cortana", description="Local on-device perceptual agent.")
-    sub = parser.add_subparsers(dest="command", required=True)
+    # No subcommand -> launch the desktop app (the one unified product).
+    sub = parser.add_subparsers(dest="command")
 
     run_p = sub.add_parser("run", help="start the continuous perceive→remember loop")
     _add_common(run_p)
@@ -54,6 +56,10 @@ def _parser() -> argparse.ArgumentParser:
     ask_p.add_argument("--until", help="ISO timestamp upper bound")
     ask_p.add_argument("--limit", type=int, default=20, help="max memories to retrieve")
 
+    rec_p = sub.add_parser("recommend", help="suggest a next action from recent activity")
+    _add_common(rec_p)
+    rec_p.add_argument("--limit", type=int, default=12, help="recent memories to consider")
+
     chat_p = sub.add_parser("chat", help="serve a local ChatGPT-style web UI")
     _add_common(chat_p)
     chat_p.add_argument("--port", type=int, help="port for the web UI (default 8808)")
@@ -70,16 +76,16 @@ def _parser() -> argparse.ArgumentParser:
 
 
 def _config_from_args(args) -> Config:
-    cfg = Config.load(args.config)
+    cfg = Config.load(getattr(args, "config", None))
     if getattr(args, "interval", None) is not None:
         cfg.interval = args.interval
     elif getattr(args, "demo", False):
         cfg.interval = 0.05          # bounded demo runs go fast; live runs use the config cadence
-    if args.backend is not None:
+    if getattr(args, "backend", None) is not None:
         cfg.backend = args.backend
-    if args.model is not None:
+    if getattr(args, "model", None) is not None:
         cfg.model = args.model
-    if args.db is not None:
+    if getattr(args, "db", None) is not None:
         cfg.db_path = Path(args.db)
     if getattr(args, "no_redact", False):
         cfg.redact = False
@@ -140,6 +146,22 @@ def cmd_ask(args) -> int:
     return 0
 
 
+def cmd_recommend(args) -> int:
+    cfg = _config_from_args(args)
+    backend = make_backend(cfg.backend, cfg)
+    memory = open_memory(cfg)
+    try:
+        rec = recommend(memory, backend, limit=args.limit)
+    finally:
+        memory.close()
+    print(rec.text)
+    if rec.basis:
+        print("\nbased on:")
+        for c in rec.basis:
+            print(f"  [{c['ts']}] {c['app_name']}")
+    return 0
+
+
 def cmd_chat(cfg: Config) -> int:  # pragma: no cover - binds a real socket
     from cortana.chatapp import serve
 
@@ -162,14 +184,17 @@ def cmd_chat(cfg: Config) -> int:  # pragma: no cover - binds a real socket
 
 def main(argv=None) -> int:
     args = _parser().parse_args(argv)
-    if args.command == "ask":
+    command = args.command or "desktop"          # no subcommand -> the unified app
+    if command == "ask":
         return cmd_ask(args)
-    if args.command == "chat":
+    if command == "recommend":
+        return cmd_recommend(args)
+    if command == "chat":
         return cmd_chat(_config_from_args(args))
-    if args.command == "desktop":  # pragma: no cover - native menu-bar app
+    if command == "desktop":  # pragma: no cover - native menu-bar app
         from cortana.desktop import run_app
         return run_app(_config_from_args(args))
-    if args.command == "chat-window":  # pragma: no cover - native webview
+    if command == "chat-window":  # pragma: no cover - native webview
         from cortana.desktop import run_chat_window
         run_chat_window(args.url)
         return 0

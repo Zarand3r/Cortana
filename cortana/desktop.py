@@ -26,10 +26,13 @@ class DesktopController:
 
     def __init__(self, *, start_tracking: Callable[[], None],
                  stop_tracking: Callable[[], None],
-                 open_chat: Callable[[], None], tracking: bool = False) -> None:
+                 open_chat: Callable[[], None],
+                 show_recommendation: Callable[[], None],
+                 tracking: bool = False) -> None:
         self._start_tracking = start_tracking
         self._stop_tracking = stop_tracking
         self._open_chat = open_chat
+        self._show_recommendation = show_recommendation
         self.tracking = tracking
 
     def start(self) -> None:
@@ -49,6 +52,10 @@ class DesktopController:
 
     def open_chat(self) -> None:
         self._open_chat()
+
+    def recommend(self) -> None:
+        """Surface a proactive recommendation from recent activity."""
+        self._show_recommendation()
 
     def tracking_label(self) -> str:
         """Menu title reflecting current state."""
@@ -95,17 +102,12 @@ class _TrackingService:  # pragma: no cover - threads + asyncio + native sensor
             self._thread.join(timeout=self._cfg.batch_window + 30)
 
 
-def _serve_chat_background(cfg) -> None:  # pragma: no cover - native socket + thread
+def _serve_chat_background(cfg, backend, memory) -> None:  # pragma: no cover - native socket + thread
     """Run the memory-backed chat server in a daemon thread so the menu-bar app
     stays responsive."""
     import threading
 
-    from cortana.backends import make_backend
     from cortana.chatapp import serve
-    from cortana.cli import open_memory
-
-    backend = make_backend(cfg.backend, cfg)
-    memory = open_memory(cfg, check_same_thread=False)   # read-only recall
     threading.Thread(
         target=lambda: serve(backend, host=cfg.chat_host, port=cfg.chat_port,
                              system_prompt=cfg.chat_system_prompt, memory=memory),
@@ -131,17 +133,29 @@ def run_chat_window(url: str) -> None:  # pragma: no cover - native webview
 
 
 def run_app(cfg) -> int:  # pragma: no cover - native menu-bar app (rumps)
-    """Launch the Cortana menu-bar app: serve chat, wire the menu to a
-    DesktopController, run the rumps event loop."""
+    """Launch the one Cortana app: background perception, a memory-backed chat
+    window, and proactive recommendations — one bundle, one permission boundary."""
     import rumps
 
-    _serve_chat_background(cfg)
+    from cortana.advisor import recommend
+    from cortana.backends import make_backend
+    from cortana.cli import open_memory
+
+    backend = make_backend(cfg.backend, cfg)
+    read_memory = open_memory(cfg, check_same_thread=False)   # shared read-only recall
+    _serve_chat_background(cfg, backend, read_memory)
     service = _TrackingService(cfg)
     url = f"http://{cfg.chat_host}:{cfg.chat_port}"
+
+    def _show_recommendation() -> None:
+        rec = recommend(read_memory, backend)
+        rumps.notification("Cortana", "Recommendation", rec.text or "No suggestion yet.")
+
     controller = DesktopController(
         start_tracking=service.start,
         stop_tracking=service.stop,
         open_chat=lambda: open_chat_window(url),
+        show_recommendation=_show_recommendation,
     )
 
     class CortanaApp(rumps.App):
@@ -149,7 +163,11 @@ def run_app(cfg) -> int:  # pragma: no cover - native menu-bar app (rumps)
             super().__init__("Cortana", quit_button="Quit Cortana")
             self.track_item = rumps.MenuItem(controller.tracking_label(),
                                              callback=self._toggle)
-            self.menu = [self.track_item, rumps.MenuItem("Open Chat…", callback=self._chat)]
+            self.menu = [
+                self.track_item,
+                rumps.MenuItem("Open Chat…", callback=self._chat),
+                rumps.MenuItem("Get Recommendation", callback=self._recommend),
+            ]
 
         def _toggle(self, _):
             controller.toggle()
@@ -157,6 +175,9 @@ def run_app(cfg) -> int:  # pragma: no cover - native menu-bar app (rumps)
 
         def _chat(self, _):
             controller.open_chat()
+
+        def _recommend(self, _):
+            controller.recommend()
 
     CortanaApp().run()
     return 0
