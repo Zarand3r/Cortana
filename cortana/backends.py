@@ -11,6 +11,7 @@ Only `FakeLLMBackend` is unit-tested; `OllamaBackend`/`MLXBackend` touch the net
 from __future__ import annotations
 
 import json
+import urllib.error
 import urllib.request
 from abc import ABC, abstractmethod
 from collections.abc import Iterable, Iterator
@@ -18,6 +19,11 @@ from dataclasses import dataclass
 from enum import Enum
 
 from cortana.config import Config
+
+
+class BackendError(RuntimeError):
+    """An LLM backend call failed (server down, bad response, timeout). Raised with
+    context so callers degrade visibly instead of propagating a raw URLError."""
 
 
 class Backend(str, Enum):
@@ -109,8 +115,12 @@ class OllamaBackend(LLMBackend):
         req = urllib.request.Request(
             self.url, data=payload, headers={"Content-Type": "application/json"}
         )
-        with urllib.request.urlopen(req, timeout=self.timeout) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
+        try:
+            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+        except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
+            raise BackendError(
+                f"Ollama generate failed ({self.host}, model={self.model}): {exc}") from exc
         return (data.get("response") or "").strip()
 
     def chat(self, messages: Iterable[Message]) -> Iterator[str]:  # pragma: no cover - hits the network
@@ -122,12 +132,20 @@ class OllamaBackend(LLMBackend):
         req = urllib.request.Request(
             self.chat_url, data=payload, headers={"Content-Type": "application/json"}
         )
-        with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+        try:
+            resp = urllib.request.urlopen(req, timeout=self.timeout)
+        except (urllib.error.URLError, TimeoutError) as exc:
+            raise BackendError(
+                f"Ollama chat failed ({self.host}, model={self.model}): {exc}") from exc
+        with resp:
             for line in resp:                       # one JSON object per line
                 line = line.strip()
                 if not line:
                     continue
-                chunk = json.loads(line)
+                try:
+                    chunk = json.loads(line)
+                except json.JSONDecodeError:
+                    continue                        # skip a malformed/keepalive line, keep streaming
                 token = chunk.get("message", {}).get("content", "")
                 if token:
                     yield token

@@ -87,7 +87,14 @@ class _TrackingService:  # pragma: no cover - threads + asyncio + native sensor
         self._memory = None
 
     def start(self) -> None:
+        import asyncio
         import threading
+        if self._thread and self._thread.is_alive():
+            return                                  # already running — don't spawn a 2nd writer
+        # Create the loop synchronously BEFORE the thread starts, so a stop() that
+        # arrives before _run has run can still schedule cancellation onto it
+        # (fixes the start/stop race that could leave a zombie loop + 2nd SQLite writer).
+        self._loop = asyncio.new_event_loop()
         self._thread = threading.Thread(target=self._run, name="cortana-track",
                                         daemon=True)
         self._thread.start()
@@ -96,7 +103,6 @@ class _TrackingService:  # pragma: no cover - threads + asyncio + native sensor
         import asyncio
 
         from cortana.cli import make_loop
-        self._loop = asyncio.new_event_loop()
         asyncio.set_event_loop(self._loop)
         agent, self._memory = make_loop(self._cfg)
         self._task = self._loop.create_task(agent.run(install_signal_handlers=False))
@@ -108,9 +114,15 @@ class _TrackingService:  # pragma: no cover - threads + asyncio + native sensor
             self._memory.close()
             self._loop.close()
 
+    def _cancel(self) -> None:
+        if self._task and not self._task.done():
+            self._task.cancel()
+
     def stop(self) -> None:
-        if self._loop and self._task and not self._task.done():
-            self._loop.call_soon_threadsafe(self._task.cancel)
+        # Schedule cancellation on the loop thread; queued before the loop starts, it
+        # runs once _run has created the task — so a fast Start→Stop still cancels.
+        if self._loop:
+            self._loop.call_soon_threadsafe(self._cancel)
         if self._thread:
             self._thread.join(timeout=self._cfg.batch_window + 30)
 
