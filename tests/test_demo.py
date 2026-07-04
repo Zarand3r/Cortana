@@ -46,3 +46,18 @@ def test_demo_defaults_to_fast_interval_but_explicit_wins():
     from cortana.cli import build_config
     assert build_config(["run", "--demo", "--backend", "fake"]).interval == 0.05
     assert build_config(["run", "--demo", "--interval", "2", "--backend", "fake"]).interval == 2
+
+
+def test_run_command_end_to_end_via_main(tmp_path):
+    """Drive the real `cortana run` dispatch (parse -> validate -> _serve -> loop)
+    hermetically via the demo sensor + fake backend."""
+    from cortana.cli import main
+    from cortana.memory import Memory
+    db = tmp_path / "run.db"
+    rc = main(["run", "--demo", "--backend", "fake", "--ticks", "4", "--db", str(db)])
+    assert rc == 0
+    mem = Memory(db)                     # _serve closed its handle; reopen to inspect
+    try:
+        assert mem.counts()["context"] > 0
+    finally:
+        mem.close()

@@ -17,21 +17,19 @@ import json
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from pathlib import Path
+from importlib.resources import files
 
 from cortana.backends import LLMBackend, Message, Role
 from cortana.memory import Memory
 from cortana.reasoning import question_to_fts
 
-# The single-page UI ships next to this module so it can be edited as plain HTML.
-INDEX_PATH = Path(__file__).resolve().parent / "webui" / "index.html"
-
 _CONTEXT_PER_MEMORY_CHARS = 400   # cap each memory in the context block
 
 
 def load_index() -> str:
-    """Return the chat UI's HTML. Read fresh so edits show up without a restart."""
-    return INDEX_PATH.read_text(encoding="utf-8")
+    """Return the chat UI's HTML. Loaded via importlib.resources so it resolves in
+    a source checkout AND inside a packaged .app bundle (no fragile __file__ paths)."""
+    return (files("cortana") / "webui" / "index.html").read_text(encoding="utf-8")
 
 
 # --------------------------------------------------------------------------- #
