@@ -74,6 +74,27 @@ def test_recall_orders_newest_first(tmp_path):
     mem.close()
 
 
+def test_recall_excludes_unchanged_heartbeats(tmp_path):
+    # Regression: dwelling on a screen writes 'unchanged' heartbeats (empty OCR).
+    # They must NOT dominate recall, or repeated questions get the same blank/stale
+    # rows instead of the real content.
+    from cortana.perception import Observation
+    mem = Memory(tmp_path / "m.db")
+    mem.remember([_obs("real content here", ts="2026-07-04T09:00:00+00:00", app="Notes")],
+                 _sem())
+    # later heartbeats are newest but carry no content
+    for i in range(3):
+        hb = Observation(ts=f"2026-07-04T10:0{i}:00+00:00", app_name="Notes",
+                         bundle_id="c", window_title="w", ocr_text="",
+                         captured=True, skip_reason="unchanged")
+        mem.remember([hb], None)               # a dwell heartbeat, as the loop writes it
+    recent = mem.recall()                      # no query -> the vague-question path
+    assert recent, "recall should surface real content, not be empty"
+    assert all(r["skip_reason"] != "unchanged" for r in recent)
+    assert recent[0]["ocr_text"] == "real content here"
+    mem.close()
+
+
 def test_fts_sync_on_delete(tmp_path):
     mem = _seed(tmp_path)
     mem._conn.execute("DELETE FROM context WHERE app_name='Mail'")

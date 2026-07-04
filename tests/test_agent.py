@@ -99,10 +99,13 @@ def test_idle_screens_skip_llm(make_memory):
     _run(AgentLoop(_cfg(batch_size=1), mem, be, sensor), max_ticks=6)
 
     assert be.calls == 2                                   # 2 distinct screens, not 6
-    rows = mem.recall(limit=100)
-    heartbeats = [r for r in rows if r["skip_reason"] == "unchanged"]
-    assert len(heartbeats) == 4                            # the 4 repeats
-    assert mem.counts()["context"] == 6
+    assert mem.counts()["context"] == 6                    # all 6 persisted
+    # the 4 repeats are stored as dwell heartbeats ...
+    hb = mem._conn.execute(
+        "SELECT count(*) FROM context WHERE skip_reason='unchanged'").fetchone()[0]
+    assert hb == 4
+    # ... but recall never surfaces heartbeats (they'd be blank/stale rows)
+    assert all(r["skip_reason"] != "unchanged" for r in mem.recall(limit=100))
 
 
 def test_changed_but_no_ocr_text_skips_llm(make_memory):

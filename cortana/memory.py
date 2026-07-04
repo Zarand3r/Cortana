@@ -249,7 +249,10 @@ class Memory:
         cols = ", ".join(f"c.{c}" for c in self._COLS) + ", s.summary"
         join = " LEFT JOIN summaries s ON s.id = c.summary_id"
         params: list = []
-        where: list[str] = []
+        # 'unchanged' heartbeats are dwell-time markers (empty OCR, no summary), not
+        # content memories — excluding them keeps recall from returning stale, blank
+        # rows during idle periods.
+        where: list[str] = ["(c.skip_reason IS NULL OR c.skip_reason != 'unchanged')"]
 
         if query:
             sql = (f"SELECT {cols} FROM context_fts "
