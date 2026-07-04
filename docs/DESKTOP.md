@@ -27,7 +27,8 @@ permission boundary.
    ├─ rumps menu:  ▶/⏸ Start/Stop Tracking · Open Chat… · Get Recommendation · Quit
    ├─ chat server thread   (chatapp.serve, memory-backed)  ──▶ 127.0.0.1:8808
    ├─ _TrackingService     (AgentLoop on a bg asyncio thread; start/stop = cancel)
-   ├─ "Get Recommendation" ──▶ advisor.recommend(memory, backend) → rumps notification
+   ├─ "Get Recommendation" ──▶ recommendation_message(memory, backend) → rumps.alert
+   │      (alert, not notification: notifications silently no-op unless bundled/signed)
    └─ "Open Chat…"         ──▶ subprocess: `cortana chat-window --url …` (pywebview)
                                      WKWebView window ─▶ 127.0.0.1:8808
 ```

@@ -69,6 +69,33 @@ def test_recommend_invokes_callable():
     assert calls["rec"] == 1
 
 
+# --- recommendation_message (what "Get Recommendation" actually displays) -----
+
+def test_recommendation_message_when_memory_has_activity(tmp_path):
+    from cortana.backends import FakeLLMBackend
+    from cortana.desktop import recommendation_message
+    from cortana.memory import Memory
+    from cortana.perception import Observation, Semantic
+    mem = Memory(tmp_path / "m.db")
+    o = Observation(ts="2026-07-04T09:00:00+00:00", app_name="Xcode", bundle_id="c",
+                    window_title="w", ocr_text="debugging a crash", captured=True)
+    mem.remember([o], Semantic(summary="Debugging a crash.", model="fake",
+                               window_start_ts=o.ts, window_end_ts=o.ts))
+    msg = recommendation_message(mem, FakeLLMBackend(response="Write a regression test."))
+    assert msg == "Write a regression test."
+    mem.close()
+
+
+def test_recommendation_message_when_memory_empty(tmp_path):
+    from cortana.backends import FakeLLMBackend
+    from cortana.desktop import recommendation_message
+    from cortana.memory import Memory
+    mem = Memory(tmp_path / "empty.db")
+    msg = recommendation_message(mem, FakeLLMBackend(response="ignored"))
+    assert "start tracking" in msg.lower()      # explicit, never blank
+    mem.close()
+
+
 def test_tracking_label_reflects_state():
     ctl, _ = _controller()
     assert "Start" in ctl.tracking_label()

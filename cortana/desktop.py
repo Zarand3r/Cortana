@@ -18,6 +18,19 @@ from __future__ import annotations
 
 from typing import Callable
 
+from cortana.advisor import recommend
+
+
+def recommendation_message(memory, backend) -> str:
+    """Compute the text to display for 'Get Recommendation' (testable; no GUI).
+    Friendly, explicit message when there's no activity yet — so the button always
+    says *something* rather than appearing to do nothing."""
+    rec = recommend(memory, backend)
+    if not rec.basis:
+        return ("Nothing to recommend yet — start tracking so I can learn what "
+                "you're working on.")
+    return rec.text or "No suggestion right now."
+
 
 class DesktopController:
     """The menu bar's brain: owns whether perception is running and delegates the
@@ -137,7 +150,6 @@ def run_app(cfg) -> int:  # pragma: no cover - native menu-bar app (rumps)
     window, and proactive recommendations — one bundle, one permission boundary."""
     import rumps
 
-    from cortana.advisor import recommend
     from cortana.backends import make_backend
     from cortana.cli import open_memory
 
@@ -148,8 +160,10 @@ def run_app(cfg) -> int:  # pragma: no cover - native menu-bar app (rumps)
     url = f"http://{cfg.chat_host}:{cfg.chat_port}"
 
     def _show_recommendation() -> None:
-        rec = recommend(read_memory, backend)
-        rumps.notification("Cortana", "Recommendation", rec.text or "No suggestion yet.")
+        # rumps.alert is a modal dialog that works when run from source; notifications
+        # silently no-op unless the app is a bundled/signed .app.
+        rumps.alert(title="Cortana — Recommendation",
+                    message=recommendation_message(read_memory, backend))
 
     controller = DesktopController(
         start_tracking=service.start,
