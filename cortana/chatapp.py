@@ -52,13 +52,17 @@ def retrieve_context(memory: Memory, query: str, *, limit: int = 8) -> list[dict
     return memory.recall(query=question_to_fts(query), limit=limit)
 
 
+_CONTEXT_HEADER = "--- CONTEXT: THE USER'S RECENT SCREEN ACTIVITY ---"
+
+
 def format_context_block(memories: list[dict]) -> str:
-    """Render retrieved memories into a system-prompt context block, or '' when
-    there are none."""
+    """Render retrieved memories into a system-prompt context block. When memory is
+    empty, return an explicit 'nothing recorded' note (never '') so the model reports
+    that instead of claiming it cannot see the screen."""
     if not memories:
-        return ""
-    lines = ["--- CONTEXT: THE USER'S RECENT SCREEN ACTIVITY "
-             "(cite the time + app if you rely on it) ---"]
+        return (f"{_CONTEXT_HEADER}\n(No screen activity has been recorded yet — "
+                "tracking may be off or just started.)")
+    lines = [f"{_CONTEXT_HEADER}  (cite the time + app if you rely on it)"]
     for m in memories:
         body = (m.get("summary") or m.get("ocr_text") or "").strip().replace("\n", " ")
         lines.append(f"[{m['ts']}] app={m['app_name']!r}: {body[:_CONTEXT_PER_MEMORY_CHARS]}")

@@ -21,7 +21,7 @@ batch_window = 60.0             # ...or flush a partial batch after this many se
 [chat]
 host = "127.0.0.1"              # bind address for the local chat web UI (localhost only)
 port = 8808                     # open http://127.0.0.1:8808 after `cortana chat`
-system_prompt = "You are a helpful assistant running fully locally on the user's Mac. Be concise and accurate."
+system_prompt = "You are Cortana, a private assistant running fully locally on the user's Mac. You are given a log of the user's recent on-screen activity below as CONTEXT; treat it as ground truth for what they are doing, and cite the time and app when you use it. If the context is empty, say nothing has been recorded yet (they may need to start tracking) — never claim you cannot see their screen. Be concise and accurate."
 
 [memory]
 db_path = "~/.local_mac_context.db"

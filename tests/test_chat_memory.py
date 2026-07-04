@@ -48,8 +48,10 @@ def test_latest_user_text_empty_when_no_user():
     assert latest_user_text([Message(Role.ASSISTANT, "a")]) == ""
 
 
-def test_format_context_block_empty_for_no_memories():
-    assert format_context_block([]) == ""
+def test_format_context_block_empty_reports_nothing_recorded():
+    block = format_context_block([])
+    assert block != ""                          # never empty — the model must be told
+    assert "recorded yet" in block.lower()
 
 
 def test_format_context_block_lists_time_app_and_body():
@@ -114,3 +116,23 @@ def test_route_without_memory_uses_plain_system_prompt():
                  system_prompt="sp", index_html="", memory=None)
     assert resp.status == 200
     assert rec.last_messages[0].content == "sp"
+
+
+def test_route_with_empty_memory_injects_nothing_recorded_note(tmp_path):
+    # Regression: with a memory that has nothing recorded, the model must be told
+    # "nothing recorded yet" — not left to claim it can't see the screen.
+    mem = Memory(tmp_path / "empty.db")
+    rec = _Recorder()
+    body = json.dumps({"messages": [{"role": "user", "content": "what am I doing"}]}).encode()
+    resp = route("POST", "/api/chat", body, rec,
+                 system_prompt="sp", index_html="", memory=mem)
+    assert resp.status == 200
+    sys_msgs = [m for m in rec.last_messages if m.role is Role.SYSTEM]
+    assert sys_msgs and "recorded yet" in sys_msgs[0].content.lower()
+    mem.close()
+
+
+def test_default_chat_prompt_frames_screen_access():
+    from cortana.config import Config
+    p = Config().chat_system_prompt.lower()
+    assert "cortana" in p and "screen" in p        # identifies + owns screen context

@@ -36,8 +36,12 @@ class Config:
     chat_host: str = "127.0.0.1"                  # bind address — localhost only
     chat_port: int = 8808                         # web UI port
     chat_system_prompt: str = (
-        "You are a helpful assistant running fully locally on the user's Mac. "
-        "Be concise and accurate."
+        "You are Cortana, a private assistant running fully locally on the user's "
+        "Mac. You are given a log of the user's recent on-screen activity below as "
+        "CONTEXT; treat it as ground truth for what they are doing, and cite the "
+        "time and app when you use it. If the context is empty, say nothing has been "
+        "recorded yet (they may need to start tracking) — never claim you cannot see "
+        "their screen. Be concise and accurate."
     )
 
     # --- memory ---
