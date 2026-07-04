@@ -111,9 +111,14 @@ def build_messages(history: Iterable[Message], system_prompt: str,
 
 def sse_frames(tokens: Iterable[str]) -> Iterator[bytes]:
     """Frame a stream of reply tokens as Server-Sent Events, terminated by a
-    sentinel ``[DONE]`` event the browser uses to close the stream."""
-    for token in tokens:
-        yield b"data: " + json.dumps({"token": token}).encode("utf-8") + b"\n\n"
+    sentinel ``[DONE]`` event the browser uses to close the stream. If the token
+    source fails mid-stream (e.g. the backend dies), emit an ``error`` frame so the
+    client sees a visible failure instead of a silently truncated reply."""
+    try:
+        for token in tokens:
+            yield b"data: " + json.dumps({"token": token}).encode("utf-8") + b"\n\n"
+    except Exception as exc:  # noqa: BLE001 - surface any backend/stream failure to the UI
+        yield b"data: " + json.dumps({"error": str(exc)}).encode("utf-8") + b"\n\n"
     yield b"data: [DONE]\n\n"
 
 

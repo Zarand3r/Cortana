@@ -18,6 +18,7 @@ class Metrics:
     summarized: int = 0      # events written with a summary
     dropped: int = 0         # backpressure evictions (persisted, never silent)
     llm_calls: int = 0
+    llm_errors: int = 0      # meaning-extraction failures (stored without summary)
     _latencies: list[float] = field(default_factory=list)
 
     def record_llm(self, seconds: float) -> None:
@@ -36,4 +37,4 @@ class Metrics:
         return (f"captures={self.captures} changed={self.changed} "
                 f"unchanged={self.unchanged} summarized={self.summarized} "
                 f"dropped={self.dropped} llm_calls={self.llm_calls} "
-                f"llm_p95={self.p95():.2f}s")
+                f"llm_errors={self.llm_errors} llm_p95={self.p95():.2f}s")

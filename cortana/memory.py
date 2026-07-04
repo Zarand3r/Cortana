@@ -10,6 +10,7 @@ Pure stdlib (sqlite3) — imports with no native deps (P7).
 from __future__ import annotations
 
 import sqlite3
+import threading
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -83,6 +84,10 @@ class Memory:
         self._conn = sqlite3.connect(self.path, check_same_thread=check_same_thread)
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA foreign_keys=ON")
+        # Serializes reads issued from the chat server's per-request threads, which
+        # share one connection (check_same_thread=False disables the check but does
+        # NOT make concurrent use of one sqlite3 connection safe).
+        self._lock = threading.Lock()
         self.migrate()
 
     # --- schema / migration ------------------------------------------------ #
@@ -150,25 +155,27 @@ class Memory:
         """Persist a batch: one summary row (if any) + its events, linked by FK.
         Returns the summary_id (or None when there was no semantic record)."""
         summary_id = None
-        if semantic is not None:
-            cur = self._conn.execute(
-                "INSERT INTO summaries "
-                "(window_start_ts, window_end_ts, summary, model, created_at) "
-                "VALUES (?, ?, ?, ?, ?)",
-                (semantic.window_start_ts, semantic.window_end_ts,
-                 semantic.summary, semantic.model, _now()),
-            )
-            summary_id = cur.lastrowid
-        for obs in observations:
-            self._insert_event(obs, summary_id=summary_id)
-        self._conn.commit()
+        # `with self._conn` is one atomic transaction: on any failure the summary and
+        # its events roll back together — never a summary orphaned from its events.
+        with self._conn:
+            if semantic is not None:
+                cur = self._conn.execute(
+                    "INSERT INTO summaries "
+                    "(window_start_ts, window_end_ts, summary, model, created_at) "
+                    "VALUES (?, ?, ?, ?, ?)",
+                    (semantic.window_start_ts, semantic.window_end_ts,
+                     semantic.summary, semantic.model, _now()),
+                )
+                summary_id = cur.lastrowid
+            for obs in observations:
+                self._insert_event(obs, summary_id=summary_id)
         return summary_id
 
     def remember_dropped(self, observation: Observation) -> None:
         """Persist a backpressure-evicted perception so loss is never silent."""
-        self._insert_event(observation, summary_id=None,
-                           skip_reason="dropped_backpressure")
-        self._conn.commit()
+        with self._conn:
+            self._insert_event(observation, summary_id=None,
+                               skip_reason="dropped_backpressure")
 
     # --- retention (P4): bounded by age, size, and orphan cleanup ---------- #
     def _db_size(self) -> int:
@@ -193,8 +200,10 @@ class Memory:
         self._conn.commit()
         prev = self._conn.isolation_level
         self._conn.isolation_level = None
-        self._conn.execute("VACUUM")
-        self._conn.isolation_level = prev
+        try:
+            self._conn.execute("VACUUM")
+        finally:
+            self._conn.isolation_level = prev   # always restore, else writes lose atomicity
 
     def forget(self, older_than: str) -> int:
         """Delete every memory older than ``older_than`` (ISO ts); drop orphan
@@ -271,11 +280,20 @@ class Memory:
         for clause in where:
             sql += f" AND {clause}"
         sql += " ORDER BY c.ts DESC LIMIT ?"
-        params.append(limit)
+        params.append(max(1, limit))            # LIMIT -1 would mean "unbounded" in SQLite
 
         out_cols = (*self._COLS, "summary")
-        return [dict(zip(out_cols, row))
-                for row in self._conn.execute(sql, params)]
+        with self._lock:                        # serialize reads across chat threads
+            try:
+                rows = list(self._conn.execute(sql, params))
+            except sqlite3.OperationalError:
+                if not query:
+                    raise
+                # A raw query contained FTS5 syntax (quote/paren/operator). Retry it
+                # as a quoted phrase so recall never crashes on arbitrary input.
+                params[0] = '"' + query.replace('"', '""') + '"'
+                rows = list(self._conn.execute(sql, params))
+        return [dict(zip(out_cols, row)) for row in rows]
 
     # --- introspection ----------------------------------------------------- #
     def counts(self) -> dict[str, int]:

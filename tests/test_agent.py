@@ -69,8 +69,32 @@ class SlowBackend(FakeLLMBackend):
         return super().generate(prompt)
 
 
+class BrokenBackend(FakeLLMBackend):
+    """Simulates the LLM being down/erroring on every call."""
+
+    def generate(self, prompt):
+        raise RuntimeError("backend unavailable")
+
+
 def _run(loop_obj, **kw):
     asyncio.run(loop_obj.run(install_signal_handlers=False, **kw))
+
+
+# --- resilience: a failing backend degrades, it must not kill the loop ------ #
+
+def test_backend_failure_degrades_and_does_not_hang(make_memory):
+    sensor = ScriptedSensor([_obs("alpha"), _obs("beta", app="Mail")])
+    mem, be = make_memory(), BrokenBackend()
+    loop_obj = AgentLoop(_cfg(batch_size=1), mem, be, sensor)
+    # If the consumer died / didn't task_done, run() would hang on queue.join and
+    # this asyncio.run would exceed the test timeout. It must finish.
+    _run(loop_obj, max_ticks=2)
+    # Observations are still persisted (degraded: stored without a summary)...
+    rows = mem.recall(limit=100)
+    assert len(rows) == 2
+    assert all(r["summary"] is None for r in rows)     # no summary, but not lost
+    # ...and the failure is counted, not silent.
+    assert loop_obj.metrics.llm_errors == 2
 
 
 # --- end-to-end spine ------------------------------------------------------- #

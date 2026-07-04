@@ -13,6 +13,26 @@ from pathlib import Path
 
 GIB = 1024 ** 3
 
+
+def _as_bool(v):
+    # TOML has native booleans; reject strings like "false" (which bool() would
+    # silently read as True — a real footgun for e.g. `redact = "false"`).
+    if not isinstance(v, bool):
+        raise TypeError(f"expected true/false, got {v!r}")
+    return v
+
+
+def _as_tuple(v):
+    if not isinstance(v, list):
+        raise TypeError(f"expected a list, got {v!r}")
+    return tuple(v)
+
+
+def _as_frozenset(v):
+    if not isinstance(v, list):
+        raise TypeError(f"expected a list, got {v!r}")
+    return frozenset(v)
+
 # The shipped config file lives in a top-level `config/` directory (repo root).
 DEFAULT_CONFIG_PATH = Path(__file__).resolve().parent.parent / "config" / "cortana.toml"
 
@@ -63,9 +83,9 @@ class Config:
     # truth for the file<->struct binding.
     _FIELD_MAP = {
         ("perception", "interval"): ("interval", float),
-        ("perception", "ocr_languages"): ("ocr_languages", tuple),
+        ("perception", "ocr_languages"): ("ocr_languages", _as_tuple),
         ("perception", "ocr_max_chars"): ("ocr_max_chars", int),
-        ("perception", "read_focused_text"): ("read_focused_text", bool),
+        ("perception", "read_focused_text"): ("read_focused_text", _as_bool),
         ("llm", "backend"): ("backend", str),
         ("llm", "model"): ("model", str),
         ("llm", "ollama_host"): ("ollama_host", str),
@@ -78,18 +98,23 @@ class Config:
         ("memory", "retention_days"): ("retention_days", int),
         ("memory", "max_db_gib"): ("max_db_bytes", lambda v: int(float(v) * GIB)),
         ("memory", "queue_max"): ("queue_max", int),
-        ("privacy", "redact"): ("redact", bool),
-        ("privacy", "excluded_bundles"): ("excluded_bundles", frozenset),
+        ("privacy", "redact"): ("redact", _as_bool),
+        ("privacy", "excluded_bundles"): ("excluded_bundles", _as_frozenset),
     }
 
     @classmethod
     def from_dict(cls, data: dict) -> "Config":
-        """Build a Config from a parsed TOML mapping, applying only present keys."""
+        """Build a Config from a parsed TOML mapping, applying only present keys.
+        A bad value fails loudly with its section/key, never silently."""
         kwargs: dict = {}
         for (section, key), (field_name, convert) in cls._FIELD_MAP.items():
             sec = data.get(section, {})
-            if key in sec:
+            if key not in sec:
+                continue
+            try:
                 kwargs[field_name] = convert(sec[key])
+            except (ValueError, TypeError) as exc:
+                raise ValueError(f"config [{section}] {key}: {exc}") from exc
         return cls(**kwargs)
 
     @classmethod

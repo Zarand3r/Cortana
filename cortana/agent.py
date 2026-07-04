@@ -189,13 +189,26 @@ class AgentLoop:
             semantic: Semantic | None = None
             if any(o.captured and o.ocr_text for o in batch):
                 started = loop.time()
-                semantic = await loop.run_in_executor(
-                    llm_pool, extract_meaning, batch, self._backend, self._cfg.ocr_max_chars)
-                self.metrics.record_llm(loop.time() - started)
-                self.metrics.summarized += len(batch)
-            await amem.remember(batch, semantic)
-            for _ in batch:
-                queue.task_done()
+                try:
+                    semantic = await loop.run_in_executor(
+                        llm_pool, extract_meaning, batch, self._backend, self._cfg.ocr_max_chars)
+                    self.metrics.record_llm(loop.time() - started)
+                    self.metrics.summarized += len(batch)
+                except Exception as exc:  # noqa: BLE001 - backend down/slow/bad response
+                    # Degrade visibly: keep the observations (store without a summary),
+                    # count the error, and keep the loop alive rather than dying.
+                    self.metrics.llm_errors += 1
+                    log.warning("meaning extraction failed; storing %d events without "
+                                "summary: %s", len(batch), exc)
+            # task_done for every item even if remember/summarize raised, so a failure
+            # can never leave queue.join() hanging at shutdown.
+            try:
+                await amem.remember(batch, semantic)
+            except Exception as exc:  # noqa: BLE001
+                log.exception("failed to persist a batch of %d events: %s", len(batch), exc)
+            finally:
+                for _ in batch:
+                    queue.task_done()
 
     async def _collect_batch(self, queue, stop, loop):
         """Gather up to batch_size observations, or whatever arrives within
