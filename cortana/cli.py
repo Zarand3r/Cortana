@@ -193,7 +193,13 @@ def main(argv=None) -> int:
         return cmd_chat(_config_from_args(args))
     if command == "desktop":  # pragma: no cover - native menu-bar app
         from cortana.desktop import run_app
-        return run_app(_config_from_args(args))
+        try:
+            return run_app(_config_from_args(args))
+        except ImportError as exc:
+            print(f"error: the desktop app needs extra dependencies ({exc}).\n"
+                  f"install them with:  pip install 'cortana[desktop]'   (or run ./setup.sh)",
+                  file=sys.stderr)
+            return 2
     if command == "chat-window":  # pragma: no cover - native webview
         from cortana.desktop import run_chat_window
         run_chat_window(args.url)

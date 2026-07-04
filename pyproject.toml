@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cortana"
+version = "0.1.0"
+description = "A local, private, screen-aware chat agent for macOS — perceives your screen, remembers, recommends, and chats, all on-device."
+readme = "README.md"
+requires-python = ">=3.11"
+# Core is stdlib-only: Ollama over HTTP (urllib), sqlite3, http.server. The native
+# capture/OCR/menu-bar bits and MLX are optional extras below.
+dependencies = []
+
+[project.optional-dependencies]
+# The live macOS app: screen capture + OCR + menu-bar shell + native chat window.
+desktop = [
+    "rumps>=0.4",
+    "pywebview>=5",
+    "pyobjc-core",
+    "pyobjc-framework-Quartz",
+    "pyobjc-framework-Vision",
+    "pyobjc-framework-Cocoa",
+]
+# Native Apple-Silicon inference (alternative to Ollama).
+mlx = ["mlx-lm"]
+# Build a standalone .app bundle (packaging/build_app.py).
+build = ["py2app>=0.28"]
+# Test/dev tooling (hermetic suite + coverage gate).
+dev = ["pytest>=8", "pytest-cov>=5"]
+
+[project.scripts]
+cortana = "cortana.cli:main"
+
+[tool.setuptools]
+packages = ["cortana"]
+
+[tool.setuptools.package-data]
+# Ship the chat UI inside the wheel (loaded via importlib.resources).
+cortana = ["webui/*.html"]

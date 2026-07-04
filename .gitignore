@@ -13,3 +13,9 @@ __pycache__/
 # Coverage artifacts
 .coverage
 htmlcov/
+
+# Python build artifacts
+/build/
+dist/*.whl
+dist/*.tar.gz
+*.egg-info/

@@ -50,7 +50,7 @@ tab via `webbrowser.open` — simpler but not a native window.)
 ## Run from source (now)
 
 ```bash
-python3 -m venv .venv && ./.venv/bin/pip install -r requirements-desktop.txt
+./setup.sh          # or manually: python3 -m venv .venv && ./.venv/bin/pip install '.[desktop]'
 # have a model ready: `ollama pull qwen2.5:7b-instruct`  (or pip install mlx-lm)
 ./.venv/bin/python -m cortana desktop
 ```
@@ -61,8 +61,9 @@ the launching app in System Settings → Privacy & Security, then restart it.
 ## Build the `.app` (scaffold — verify on a real Mac)
 
 ```bash
-pip install -r requirements-desktop.txt
-python setup.py py2app          # -> dist/Cortana.app
+./setup.sh                                        # installs the desktop runtime deps
+./.venv/bin/pip install '.[build]'                # adds py2app (build-only)
+./.venv/bin/python packaging/build_app.py py2app  # -> dist/Cortana.app
 ```
 
 **Signing/notarization (required for TCC grants to persist across rebuilds):**

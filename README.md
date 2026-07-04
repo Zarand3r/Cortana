@@ -33,24 +33,47 @@ python -m cortana recommend --backend fake --db /tmp/cortana.db                 
 python -m cortana chat --backend fake --db /tmp/cortana.db                      # open http://127.0.0.1:8808
 ```
 
-## Run it for real (menu-bar app)
+## Install & run it for real (menu-bar app)
+
+One command sets up a virtualenv, installs the app, and pulls a model:
 
 ```bash
-# 1. install the native deps + desktop shell (one-time)
-pip install -r requirements-desktop.txt          # pyobjc + rumps + pywebview
+./setup.sh                 # macOS: desktop app + Ollama model
+./setup.sh --core-only     # CLI only, no native deps (any OS)
+./setup.sh --mlx           # also install the MLX backend
+```
 
-# 2. a local model
-ollama serve & ; ollama pull qwen2.5:7b-instruct  # or: pip install mlx-lm
+Then:
 
-# 3. launch the app  (menu bar: ▶/⏸ Tracking · Open Chat · Get Recommendation)
-python -m cortana desktop        # `python -m cortana` (no args) does the same
+```bash
+source .venv/bin/activate
+cortana desktop            # the menu-bar app (or just: cortana)
 ```
 
 First launch: grant **Screen Recording** (and **Accessibility** for focused-text) to
 the launching app in **System Settings → Privacy & Security**, then relaunch — macOS
-ties those permissions to the app. Build a standalone signed `Cortana.app` with
-`python setup.py py2app`; see [`docs/DESKTOP.md`](docs/DESKTOP.md) for the
-architecture and signing/notarization steps.
+ties those permissions to the app. (Manual install instead of `setup.sh`:
+`pip install '.[desktop]'` + `ollama pull qwen2.5:7b-instruct`.)
+
+## Give it to someone else (export / distribute)
+
+Cortana is a normal Python package, so there are three ways to hand it off:
+
+```bash
+# 1. Share the folder/repo — they run one command:
+./setup.sh
+
+# 2. Build a wheel and send that file:
+./.venv/bin/pip install build && ./.venv/bin/python -m build   # -> dist/cortana-0.1.0-*.whl
+#    they:  pip install 'cortana-0.1.0-py3-none-any.whl[desktop]'
+
+# 3. Build a double-clickable macOS .app (needs signing to distribute widely):
+./.venv/bin/pip install '.[build]'
+./.venv/bin/python packaging/build_app.py py2app               # -> dist/Cortana.app
+```
+
+Signing/notarization (so the Screen Recording grant persists on other Macs) is in
+[`docs/DESKTOP.md`](docs/DESKTOP.md).
 
 ## The pieces, individually
 
