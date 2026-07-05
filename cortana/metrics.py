@@ -14,7 +14,8 @@ from dataclasses import dataclass, field
 class Metrics:
     captures: int = 0        # observations perceived (sensor returned something)
     changed: int = 0         # routed as new content -> enqueued
-    unchanged: int = 0       # idle heartbeats (no LLM)
+    unchanged: int = 0       # idle frames (no LLM, not stored)
+    ocr_skipped: int = 0     # frames where pre-OCR image dedup skipped OCR (battery win)
     summarized: int = 0      # events written with a summary
     dropped: int = 0         # backpressure evictions (persisted, never silent)
     llm_calls: int = 0
@@ -35,6 +36,7 @@ class Metrics:
 
     def render(self) -> str:
         return (f"captures={self.captures} changed={self.changed} "
-                f"unchanged={self.unchanged} summarized={self.summarized} "
-                f"dropped={self.dropped} llm_calls={self.llm_calls} "
-                f"llm_errors={self.llm_errors} llm_p95={self.p95():.2f}s")
+                f"unchanged={self.unchanged} ocr_skipped={self.ocr_skipped} "
+                f"summarized={self.summarized} dropped={self.dropped} "
+                f"llm_calls={self.llm_calls} llm_errors={self.llm_errors} "
+                f"llm_p95={self.p95():.2f}s")

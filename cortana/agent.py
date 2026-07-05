@@ -21,11 +21,11 @@ from cortana.memory import Memory
 from cortana.metrics import Metrics
 from cortana.perception import (
     Observation,
+    ScreenSensor,
     Semantic,
     changed,
     content_hash,
     extract_meaning,
-    perceive,
 )
 from cortana.redaction import redact_observation
 from cortana.working_memory import WorkingMemory
@@ -45,9 +45,11 @@ class Disposition(Enum):
 
 
 def plan_disposition(prev_hash: str | None, obs: Observation) -> Disposition:
-    """Assign ``obs.content_hash`` and decide whether the screen changed since the
-    previous perception. Pure — no I/O, so the producer's branch is unit-tested
-    without the event loop."""
+    """Decide whether the screen changed since the previous perception. If the sensor
+    already deduped by image (skipped OCR, ``skip_reason == 'unchanged'``), honor that
+    directly; otherwise dedup on the OCR text. Pure — unit-tested without the loop."""
+    if obs.skip_reason == "unchanged":            # pre-OCR image dedup (sensor)
+        return Disposition.UNCHANGED
     obs.content_hash = content_hash(obs.app_name, obs.window_title, obs.ocr_text)
     return Disposition.CHANGED if changed(prev_hash, obs.content_hash) else Disposition.UNCHANGED
 
@@ -85,9 +87,9 @@ class AgentLoop:
         self._cfg = config
         self._memory = memory
         self._backend = backend
-        # sensor: (ts) -> Observation | None. Default = the live native sensor;
-        # tests inject a fake so the loop runs without PyObjC.
-        self._sensor = sensor or (lambda ts: perceive(ts, config.ocr_languages))
+        # sensor: (ts) -> Observation | None. Default = the live native sensor (with
+        # pre-OCR image dedup); tests inject a fake so the loop runs without PyObjC.
+        self._sensor = sensor or ScreenSensor(config.ocr_languages)
         self.metrics = Metrics()
         # Short-term memory: recent changed observations, live in RAM. Shared with
         # readers (chat/recommend) when injected; otherwise loop-local.
@@ -171,6 +173,8 @@ class AgentLoop:
         time is recoverable from the gap to the next episode's timestamp."""
         if plan_disposition(prev_hash, obs) is Disposition.UNCHANGED:
             self.metrics.unchanged += 1
+            if obs.skip_reason == "unchanged":       # sensor skipped OCR (image dedup)
+                self.metrics.ocr_skipped += 1
             return prev_hash                         # idle: count it, store nothing
         self.metrics.changed += 1
         self.working.add(obs)                        # short-term memory: recent activity

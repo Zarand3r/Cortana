@@ -97,6 +97,23 @@ def test_backend_failure_degrades_and_does_not_hang(make_memory):
     assert loop_obj.metrics.llm_errors == 2
 
 
+def test_loop_honors_sensor_image_dedup(make_memory):
+    # A sensor that pre-deduped by image returns skip_reason='unchanged' (OCR skipped).
+    # The loop must treat it as unchanged: no LLM, not stored, and counted as an
+    # OCR-skip (the battery win).
+    unchanged = Observation(ts="2026-07-05T10:00:00+00:00", app_name="Notes",
+                            bundle_id="c", window_title="", ocr_text="",
+                            captured=True, skip_reason="unchanged")
+    sensor = ScriptedSensor([_obs("real screen"), unchanged, unchanged])
+    mem, be = make_memory(), FakeLLMBackend()
+    loop_obj = AgentLoop(_cfg(batch_size=1), mem, be, sensor)
+    _run(loop_obj, max_ticks=3)
+
+    assert be.calls == 1                          # only the one real (OCR'd) screen
+    assert mem.counts()["context"] == 1           # unchanged frames not stored
+    assert loop_obj.metrics.ocr_skipped == 2      # both dedup frames skipped OCR
+
+
 def test_loop_populates_working_memory_with_changed_observations(make_memory):
     sensor = ScriptedSensor([_obs("screen A"), _obs("screen A"),   # repeat -> heartbeat
                              _obs("screen B", app="Mail")])

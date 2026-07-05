@@ -77,6 +77,23 @@ def changed(prev_hash: str | None, new_hash: str) -> bool:
 
 
 # --------------------------------------------------------------------------- #
+# Pre-OCR image dedup (P: cheap 1s capture). A perceptual image hash (dHash)   #
+# lets us SKIP the expensive OCR pass when the screen is visually ~unchanged.  #
+# The hashing is native (below); the similarity decision is pure + tested.     #
+# --------------------------------------------------------------------------- #
+def hamming_distance(a: int, b: int) -> int:
+    """Number of differing bits between two integer hashes."""
+    return (a ^ b).bit_count()
+
+
+def images_similar(a: int, b: int, threshold: int = 4) -> bool:
+    """True if two dHashes are within ``threshold`` bits — i.e. the screen is
+    visually ~unchanged (tolerates the cursor blink / menu-bar clock ticking).
+    A larger real change flips many bits and reads as changed, so OCR still runs."""
+    return hamming_distance(a, b) <= threshold
+
+
+# --------------------------------------------------------------------------- #
 # Meaning extraction (the LLM tool). Sync; the Phase-3 loop wraps in executor. #
 # --------------------------------------------------------------------------- #
 SYSTEM_PROMPT = (
@@ -197,6 +214,63 @@ def perceive(ts: str, languages: tuple[str, ...] = ("en-US",)) -> Observation:  
         return Observation(ts, app_name, bundle_id, "", "", captured=False,
                            skip_reason=f"ocr_error: {exc}")
     return Observation(ts, app_name, bundle_id, "", text, captured=True)
+
+
+def image_dhash(cgimage, size: int = 8) -> int:  # pragma: no cover - native macOS (Quartz)
+    """Perceptual difference-hash of a CGImage: downscale to (size+1)×size grayscale
+    and emit one bit per adjacent-pixel comparison. Robust to tiny changes (cursor,
+    clock); distinct screens differ in many bits. NOTE: native bitmap read — verify
+    on a real Mac; the sensor falls back to OCR if this raises."""
+    import Quartz  # lazy
+
+    w, h = size + 1, size
+    gray = Quartz.CGColorSpaceCreateDeviceGray()
+    ctx = Quartz.CGBitmapContextCreate(None, w, h, 8, w, gray, Quartz.kCGImageAlphaNone)
+    Quartz.CGContextDrawImage(ctx, Quartz.CGRectMake(0, 0, w, h), cgimage)
+    px = memoryview(Quartz.CGBitmapContextGetData(ctx).as_buffer(w * h))
+    bits = 0
+    for row in range(h):
+        base = row * w
+        for col in range(size):
+            bits = (bits << 1) | (1 if px[base + col] > px[base + col + 1] else 0)
+    return bits
+
+
+class ScreenSensor:  # pragma: no cover - native macOS (capture/OCR)
+    """The live sensor with pre-OCR image dedup. Each call captures the screen and
+    computes a cheap perceptual hash; if it's ~unchanged from the last frame it
+    returns an 'unchanged' Observation WITHOUT running OCR — the expensive step —
+    making 1s capture cheap on battery during idle/static periods. Any hashing error
+    falls back to OCR (fail-safe: never skip a real change)."""
+
+    def __init__(self, languages: tuple[str, ...] = ("en-US",),
+                 similarity_threshold: int = 4) -> None:
+        self._languages = languages
+        self._threshold = similarity_threshold
+        self._last_dhash: int | None = None
+
+    def __call__(self, ts: str) -> Observation:
+        app_name, bundle_id, _pid = frontmost_app()
+        image = capture_screen()
+        if image is None:
+            return Observation(ts, app_name, bundle_id, "", "", captured=False,
+                               skip_reason="capture_blocked_or_no_permission")
+        try:
+            dh = image_dhash(image)
+        except Exception:  # noqa: BLE001 - hashing must never break capture
+            dh = None
+        if (dh is not None and self._last_dhash is not None
+                and images_similar(dh, self._last_dhash, self._threshold)):
+            return Observation(ts, app_name, bundle_id, "", "", captured=True,
+                               skip_reason="unchanged", content_hash=hex(dh))
+        try:
+            text = ocr_image(image, self._languages)
+        except Exception as exc:  # noqa: BLE001 - OCR failure is non-fatal
+            return Observation(ts, app_name, bundle_id, "", "", captured=False,
+                               skip_reason=f"ocr_error: {exc}")
+        if dh is not None:
+            self._last_dhash = dh
+        return Observation(ts, app_name, bundle_id, "", text, captured=True)
 
 
 def ocr_image(cgimage, languages: tuple[str, ...] = ("en-US",)) -> str:  # pragma: no cover - native macOS (Vision)

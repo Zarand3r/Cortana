@@ -93,11 +93,15 @@ Key properties:
   and `llm_errors` is counted; backpressure evictions are persisted as
   `dropped_backpressure`. Nothing is lost silently.
 
-> **Capture-rate caveat (CPU/power).** Change detection runs *after* OCR, so at 1s we
-> still screenshot + OCR every second — that is real CPU/GPU/battery cost on a
-> laptop. The natural next optimization is a cheap **pre-OCR perceptual/image hash**
-> to skip OCR on visually-identical frames (deferred; would make 1s cheap). Disk is
-> already handled by compaction above.
+**Pre-OCR image dedup (cheap 1s capture).** OCR is the expensive step, so before
+running it the sensor computes a cheap **perceptual image hash (dHash)** of the
+screenshot; if it's within a few bits of the previous frame (tolerating the cursor
+blink / clock tick), it returns an `unchanged` observation and **skips OCR entirely**
+(`ScreenSensor`, `metrics.ocr_skipped`). So during idle/static periods 1s capture
+costs a screenshot + a tiny hash, not a full OCR pass — the battery win. A real
+screen change flips many bits → OCR runs. Any hashing error falls back to OCR
+(fail-safe: never skip a real change). Two dedup layers stack: **image** dedup skips
+OCR; **text** dedup (OCR-content hash) then skips the LLM + storage.
 
 ---
 
