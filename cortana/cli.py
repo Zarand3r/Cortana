@@ -121,12 +121,14 @@ def open_memory(cfg: Config, *, check_same_thread: bool = True) -> Memory:
     )
 
 
-def make_loop(cfg: Config, *, sensor=None) -> tuple[AgentLoop, Memory]:
+def make_loop(cfg: Config, *, sensor=None,
+              working_memory=None) -> tuple[AgentLoop, Memory]:
     """Wire Memory + backend + AgentLoop from a Config. ``sensor`` overrides the
-    live native sensor (e.g. the demo sensor for deps-free local runs)."""
+    live native sensor; ``working_memory`` injects a shared short-term buffer so
+    readers (chat/recommend) can see the loop's recent activity."""
     memory = open_memory(cfg, check_same_thread=False)   # writes funnel through the db executor
     backend = make_backend(cfg.backend, cfg)
-    return AgentLoop(cfg, memory, backend, sensor), memory
+    return AgentLoop(cfg, memory, backend, sensor, working_memory=working_memory), memory
 
 
 def cmd_ask(args) -> int:

@@ -18,14 +18,20 @@ from __future__ import annotations
 
 from typing import Callable
 
-from cortana.advisor import recommend
+from cortana.advisor import recommend, recommend_from_observations
 
 
-def recommendation_message(memory, backend) -> str:
+def recommendation_message(memory, backend, working_memory=None) -> str:
     """Compute the text to display for 'Get Recommendation' (testable; no GUI).
-    Friendly, explicit message when there's no activity yet — so the button always
-    says *something* rather than appearing to do nothing."""
-    rec = recommend(memory, backend)
+    Prefers short-term working memory (current activity) when it has any, else the
+    long-term store. Always returns a message — never fails silently."""
+    try:
+        if working_memory is not None and len(working_memory):
+            rec = recommend_from_observations(working_memory.recent(limit=12), backend)
+        else:
+            rec = recommend(memory, backend)
+    except Exception as exc:  # noqa: BLE001 - model down/slow: show it, never fail silently
+        return f"Couldn't generate a recommendation (is the model running?): {exc}"
     if not rec.basis:
         return ("Nothing to recommend yet — start tracking so I can learn what "
                 "you're working on.")
@@ -79,8 +85,9 @@ class _TrackingService:  # pragma: no cover - threads + asyncio + native sensor
     """Runs the perception AgentLoop on a private asyncio event loop in a daemon
     thread; ``stop`` cancels it (AgentLoop.run drains + closes in its finally)."""
 
-    def __init__(self, cfg) -> None:
+    def __init__(self, cfg, working_memory=None) -> None:
         self._cfg = cfg
+        self._working = working_memory
         self._thread = None
         self._loop = None
         self._task = None
@@ -104,7 +111,7 @@ class _TrackingService:  # pragma: no cover - threads + asyncio + native sensor
 
         from cortana.cli import make_loop
         asyncio.set_event_loop(self._loop)
-        agent, self._memory = make_loop(self._cfg)
+        agent, self._memory = make_loop(self._cfg, working_memory=self._working)
         self._task = self._loop.create_task(agent.run(install_signal_handlers=False))
         try:
             self._loop.run_until_complete(self._task)
@@ -187,18 +194,22 @@ def run_app(cfg) -> int:  # pragma: no cover - native menu-bar app (rumps)
     from cortana.backends import make_backend
     from cortana.cli import open_memory
 
+    from cortana.working_memory import WorkingMemory
+
     backend = make_backend(cfg.backend, cfg)
     read_memory = open_memory(cfg, check_same_thread=False)   # shared read-only recall
+    working = WorkingMemory(maxlen=cfg.working_memory_max)    # short-term, shared in-process
     _serve_chat_background(cfg, backend, read_memory)
-    service = _TrackingService(cfg)
+    service = _TrackingService(cfg, working_memory=working)   # the tracker fills it
     url = f"http://{cfg.chat_host}:{cfg.chat_port}"
     chat_window = ChatWindowManager(lambda: _spawn_chat_window(url))
 
     def _show_recommendation() -> None:
         # rumps.alert is a modal dialog that works when run from source; notifications
-        # silently no-op unless the app is a bundled/signed .app.
+        # silently no-op unless the app is a bundled/signed .app. Recommendation is
+        # grounded in short-term working memory (current activity) first.
         rumps.alert(title="Cortana — Recommendation",
-                    message=recommendation_message(read_memory, backend))
+                    message=recommendation_message(read_memory, backend, working))
 
     controller = DesktopController(
         start_tracking=service.start,

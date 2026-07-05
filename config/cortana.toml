@@ -28,6 +28,7 @@ db_path = "~/.local_mac_context.db"
 retention_days = 90             # age bound — drop memories older than this
 max_db_gib = 2.0                # size bound — evict oldest beyond this
 queue_max = 256                 # backpressure bound on the perception->memory queue
+working_memory_max = 50         # recent observations kept in RAM (short-term memory)
 
 [privacy]
 redact = true                   # scrub high-confidence secrets (keys, tokens, cards, SSNs) before store

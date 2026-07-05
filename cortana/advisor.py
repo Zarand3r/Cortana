@@ -44,7 +44,16 @@ def build_recommendation_prompt(memories: list[dict]) -> str:
 
 
 def recommend(memory: Memory, backend: LLMBackend, *, limit: int = 12) -> Recommendation:
-    """Pull the most recent memories and ask the LLM for one grounded suggestion."""
+    """Pull the most recent memories (long-term store) and ask for one suggestion."""
     memories = memory.recall(limit=limit)          # recent activity (no query)
+    text = backend.generate(build_recommendation_prompt(memories)).strip()
+    return Recommendation(text=text, basis=memories)
+
+
+def recommend_from_observations(observations, backend: LLMBackend) -> Recommendation:
+    """Recommend from short-term (working) memory — the live recent observations —
+    so the suggestion reflects what the user is doing *right now*, no DB query."""
+    memories = [{"ts": o.ts, "app_name": o.app_name,
+                 "ocr_text": o.ocr_text, "summary": None} for o in observations]
     text = backend.generate(build_recommendation_prompt(memories)).strip()
     return Recommendation(text=text, basis=memories)

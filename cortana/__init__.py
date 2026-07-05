@@ -4,7 +4,8 @@ Package subsystems (see docs/DESIGN.md):
   - config:     runtime configuration
   - perception: the agent's senses (capture, OCR, change-detection, meaning extraction)
   - backends:   LLM backends (fake / Ollama / MLX)
-  - memory:     tiered episodic + semantic memory over SQLite
+  - memory:     tiered episodic + semantic long-term memory over SQLite
+  - working_memory: short-term rolling buffer of recent observations (in RAM)
 """
 
-__all__ = ["config", "perception", "backends", "memory"]
+__all__ = ["config", "perception", "backends", "memory", "working_memory"]

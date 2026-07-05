@@ -133,6 +133,44 @@ def test_recommendation_message_when_memory_empty(tmp_path):
     mem.close()
 
 
+def test_recommendation_message_prefers_working_memory(tmp_path):
+    # With working memory populated, the recommendation comes from current activity
+    # (no DB query needed) — the point of short-term memory.
+    from cortana.backends import FakeLLMBackend
+    from cortana.desktop import recommendation_message
+    from cortana.memory import Memory
+    from cortana.perception import Observation
+    from cortana.working_memory import WorkingMemory
+    wm = WorkingMemory()
+    wm.add(Observation(ts="2026-07-04T09:00:00+00:00", app_name="Xcode", bundle_id="c",
+                       window_title="w", ocr_text="debugging", captured=True))
+    mem = Memory(tmp_path / "empty.db")          # DB empty; WM must be used instead
+    msg = recommendation_message(mem, FakeLLMBackend(response="Fix the crash."), wm)
+    assert msg == "Fix the crash."
+    mem.close()
+
+
+def test_recommendation_message_shows_error_instead_of_silence(tmp_path):
+    from cortana.desktop import recommendation_message
+    from cortana.memory import Memory
+    from cortana.perception import Observation
+    from cortana.working_memory import WorkingMemory
+
+    class Broken:
+        model = "x"
+        def generate(self, prompt):
+            raise RuntimeError("model offline")
+    wm = WorkingMemory()
+    wm.add(Observation(ts="t", app_name="A", bundle_id="c", window_title="w",
+                       ocr_text="x", captured=True))
+    mem = Memory(tmp_path / "m.db")
+    try:
+        msg = recommendation_message(mem, Broken(), wm)
+    finally:
+        mem.close()
+    assert "couldn't generate" in msg.lower()    # visible failure, not a dead button
+
+
 def test_tracking_label_reflects_state():
     ctl, _ = _controller()
     assert "Start" in ctl.tracking_label()

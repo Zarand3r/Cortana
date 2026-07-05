@@ -97,6 +97,16 @@ def test_backend_failure_degrades_and_does_not_hang(make_memory):
     assert loop_obj.metrics.llm_errors == 2
 
 
+def test_loop_populates_working_memory_with_changed_observations(make_memory):
+    sensor = ScriptedSensor([_obs("screen A"), _obs("screen A"),   # repeat -> heartbeat
+                             _obs("screen B", app="Mail")])
+    loop_obj = AgentLoop(_cfg(batch_size=1), make_memory(), FakeLLMBackend(), sensor)
+    _run(loop_obj, max_ticks=3)
+    # working memory holds the distinct (changed) observations, live in RAM
+    recent = loop_obj.working.recent()
+    assert [o.ocr_text for o in recent] == ["screen A", "screen B"]  # not the repeat
+
+
 # --- end-to-end spine ------------------------------------------------------- #
 
 def test_perceive_remember_recall_end_to_end(make_memory):

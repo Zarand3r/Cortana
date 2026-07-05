@@ -29,6 +29,7 @@ from cortana.perception import (
     perceive,
 )
 from cortana.redaction import redact_observation
+from cortana.working_memory import WorkingMemory
 
 log = logging.getLogger("cortana.agent")
 
@@ -81,7 +82,7 @@ class AgentLoop:
     executors (capture / llm / db). See docs/AGENT_LOOP.md."""
 
     def __init__(self, config: Config, memory: Memory, backend: LLMBackend,
-                 sensor=None) -> None:
+                 sensor=None, working_memory: WorkingMemory | None = None) -> None:
         self._cfg = config
         self._memory = memory
         self._backend = backend
@@ -89,6 +90,9 @@ class AgentLoop:
         # tests inject a fake so the loop runs without PyObjC.
         self._sensor = sensor or (lambda ts: perceive(ts, config.ocr_languages))
         self.metrics = Metrics()
+        # Short-term memory: recent changed observations, live in RAM. Shared with
+        # readers (chat/recommend) when injected; otherwise loop-local.
+        self.working = working_memory or WorkingMemory(maxlen=config.working_memory_max)
 
     @property
     def drops_total(self) -> int:
@@ -169,6 +173,7 @@ class AgentLoop:
             await amem.remember([heartbeat], None)   # dwell-time signal, no LLM
             return prev_hash
         self.metrics.changed += 1
+        self.working.add(obs)                        # short-term memory: recent activity
         try:
             queue.put_nowait(obs)
         except asyncio.QueueFull:

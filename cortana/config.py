@@ -69,6 +69,7 @@ class Config:
     retention_days: int = 90                      # age bound
     max_db_bytes: int = 2 * GIB                   # size bound
     queue_max: int = 256                          # backpressure bound
+    working_memory_max: int = 50                  # recent observations kept in RAM (short-term memory)
 
     # --- privacy ---
     redact: bool = True                           # scrub high-confidence secrets pre-store
@@ -98,6 +99,7 @@ class Config:
         ("memory", "retention_days"): ("retention_days", int),
         ("memory", "max_db_gib"): ("max_db_bytes", lambda v: int(float(v) * GIB)),
         ("memory", "queue_max"): ("queue_max", int),
+        ("memory", "working_memory_max"): ("working_memory_max", int),
         ("privacy", "redact"): ("redact", _as_bool),
         ("privacy", "excluded_bundles"): ("excluded_bundles", _as_frozenset),
     }

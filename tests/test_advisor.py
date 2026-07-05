@@ -42,6 +42,16 @@ def test_recommend_returns_grounded_recommendation(tmp_path):
     mem.close()
 
 
+def test_recommend_from_observations_uses_working_memory():
+    from cortana.advisor import recommend_from_observations
+    obs = [Observation(ts="2026-07-04T09:00:00+00:00", app_name="Xcode", bundle_id="c",
+                       window_title="w", ocr_text="debugging a crash", captured=True)]
+    be = FakeLLMBackend(response="Add a regression test.")
+    rec = recommend_from_observations(obs, be)
+    assert rec.text == "Add a regression test."
+    assert rec.basis and rec.basis[0]["app_name"] == "Xcode"
+
+
 def test_recommend_on_empty_memory(tmp_path):
     mem = Memory(tmp_path / "empty.db")
     be = FakeLLMBackend(response="Not enough activity yet.")
