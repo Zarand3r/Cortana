@@ -69,6 +69,43 @@ def test_recommend_invokes_callable():
     assert calls["rec"] == 1
 
 
+# --- ChatWindowManager: one window, reused (not one per click) ----------------
+
+class _FakeProc:
+    def __init__(self):
+        self._alive = True
+
+    def poll(self):
+        return None if self._alive else 0      # None = still running
+
+    def die(self):
+        self._alive = False
+
+
+def test_chat_window_reuses_single_instance():
+    from cortana.desktop import ChatWindowManager
+    spawned = []
+    mgr = ChatWindowManager(lambda: spawned.append(_FakeProc()) or spawned[-1])
+
+    assert mgr.open() is True                   # first click opens a window
+    assert len(spawned) == 1
+    assert mgr.open() is False                   # second click reuses it — no new window
+    assert mgr.open() is False
+    assert len(spawned) == 1                     # still just one window
+
+
+def test_chat_window_respawns_after_close():
+    from cortana.desktop import ChatWindowManager
+    spawned = []
+    mgr = ChatWindowManager(lambda: spawned.append(_FakeProc()) or spawned[-1])
+    mgr.open()
+    assert mgr.is_open() is True
+    spawned[0].die()                             # user closed the window
+    assert mgr.is_open() is False
+    assert mgr.open() is True                     # reopening spawns a fresh one
+    assert len(spawned) == 2
+
+
 # --- recommendation_message (what "Get Recommendation" actually displays) -----
 
 def test_recommendation_message_when_memory_has_activity(tmp_path):

@@ -29,8 +29,10 @@ permission boundary.
    ├─ _TrackingService     (AgentLoop on a bg asyncio thread; start/stop = cancel)
    ├─ "Get Recommendation" ──▶ recommendation_message(memory, backend) → rumps.alert
    │      (alert, not notification: notifications silently no-op unless bundled/signed)
-   └─ "Open Chat…"         ──▶ subprocess: `cortana chat-window --url …` (pywebview)
-                                     WKWebView window ─▶ 127.0.0.1:8808
+   └─ "Open Chat…"         ──▶ ChatWindowManager: one reused pywebview subprocess
+                                     (`cortana chat-window --url …`) ─▶ 127.0.0.1:8808
+                                     repeated clicks reuse the live window (+ its
+                                     conversation); a new one spawns only if closed
 ```
 
 - **`DesktopController`** (tested): the start/stop/toggle state machine the menu wires

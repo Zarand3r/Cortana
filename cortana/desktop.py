@@ -140,13 +140,35 @@ def _serve_chat_background(cfg, backend, memory) -> None:  # pragma: no cover - 
     ).start()
 
 
-def open_chat_window(url: str) -> None:  # pragma: no cover - native webview subprocess
-    """Open the chat UI in a native window. Launched as a subprocess so its pywebview
-    run loop doesn't collide with the menu bar's rumps run loop (both want the main
-    thread — see docs/DESKTOP.md §event-loops)."""
+class ChatWindowManager:
+    """Ensures a *single* chat window. `open()` spawns one only when none is already
+    running, so repeated 'Open Chat' clicks reuse the existing window (and its
+    in-progress conversation) instead of piling up new, empty windows. ``spawn`` is
+    injected (returns a process-like object with ``poll()``) so the logic is testable
+    without a real subprocess."""
+
+    def __init__(self, spawn) -> None:
+        self._spawn = spawn
+        self._proc = None
+
+    def is_open(self) -> bool:
+        return self._proc is not None and self._proc.poll() is None
+
+    def open(self) -> bool:
+        """Open the window if not already open. Returns True if a new window was
+        spawned, False if an existing one was reused."""
+        if self.is_open():
+            return False
+        self._proc = self._spawn()
+        return True
+
+
+def _spawn_chat_window(url: str):  # pragma: no cover - native webview subprocess
+    """Spawn the chat UI as a subprocess so its pywebview run loop doesn't collide
+    with the menu bar's rumps run loop (both want the main thread — docs/DESKTOP.md)."""
     import subprocess
     import sys
-    subprocess.Popen([sys.executable, "-m", "cortana", "chat-window", "--url", url])
+    return subprocess.Popen([sys.executable, "-m", "cortana", "chat-window", "--url", url])
 
 
 def run_chat_window(url: str) -> None:  # pragma: no cover - native webview
@@ -170,6 +192,7 @@ def run_app(cfg) -> int:  # pragma: no cover - native menu-bar app (rumps)
     _serve_chat_background(cfg, backend, read_memory)
     service = _TrackingService(cfg)
     url = f"http://{cfg.chat_host}:{cfg.chat_port}"
+    chat_window = ChatWindowManager(lambda: _spawn_chat_window(url))
 
     def _show_recommendation() -> None:
         # rumps.alert is a modal dialog that works when run from source; notifications
@@ -180,7 +203,7 @@ def run_app(cfg) -> int:  # pragma: no cover - native menu-bar app (rumps)
     controller = DesktopController(
         start_tracking=service.start,
         stop_tracking=service.stop,
-        open_chat=lambda: open_chat_window(url),
+        open_chat=chat_window.open,          # single reused window, not one-per-click
         show_recommendation=_show_recommendation,
     )
 
