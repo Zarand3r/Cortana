@@ -61,11 +61,15 @@ def build_answer_prompt(question: str, memories: list[dict]) -> str:
 
 def reason(question: str, memory: Memory, backend: LLMBackend, *,
            since: str | None = None, until: str | None = None,
-           app: str | None = None, limit: int = 20) -> Answer:
+           app: str | None = None, limit: int = 20, embedder=None) -> Answer:
     """Retrieve relevant memories, reason over them with the LLM, return a grounded
-    Answer. Retrieval = full-text on the question's content words, narrowed by any
-    time/app filters."""
-    memories = memory.recall(query=question_to_fts(question),
-                             since=since, until=until, app=app, limit=limit)
+    Answer. Retrieval is hybrid (keyword + semantic) when an ``embedder`` is given,
+    else full-text on the question's content words; narrowed by any time/app filters."""
+    if embedder is not None:
+        memories = memory.recall(query=question, since=since, until=until,
+                                 app=app, limit=limit, embedder=embedder)
+    else:
+        memories = memory.recall(query=question_to_fts(question),
+                                 since=since, until=until, app=app, limit=limit)
     text = backend.generate(build_answer_prompt(question, memories)).strip()
     return Answer(text=text, citations=memories)

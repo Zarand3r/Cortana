@@ -68,8 +68,9 @@ class _AsyncMemory:
         self._loop = loop
         self._ex = executor
 
-    async def remember(self, observations, semantic):
-        return await self._loop.run_in_executor(self._ex, self._m.remember, observations, semantic)
+    async def remember(self, observations, semantic, embedder=None):
+        return await self._loop.run_in_executor(
+            self._ex, self._m.remember, observations, semantic, embedder)
 
     async def remember_dropped(self, observation):
         await self._loop.run_in_executor(self._ex, self._m.remember_dropped, observation)
@@ -83,10 +84,12 @@ class AgentLoop:
     executors (capture / llm / db). See docs/AGENT_LOOP.md."""
 
     def __init__(self, config: Config, memory: Memory, backend: LLMBackend,
-                 sensor=None, working_memory: WorkingMemory | None = None) -> None:
+                 sensor=None, working_memory: WorkingMemory | None = None,
+                 embedder=None) -> None:
         self._cfg = config
         self._memory = memory
         self._backend = backend
+        self._embedder = embedder     # when set, store semantic vectors on write
         # sensor: (ts) -> Observation | None. Default = the live native sensor (with
         # pre-OCR image dedup); tests inject a fake so the loop runs without PyObjC.
         self._sensor = sensor or ScreenSensor(config.ocr_languages)
@@ -212,7 +215,7 @@ class AgentLoop:
             # task_done for every item even if remember/summarize raised, so a failure
             # can never leave queue.join() hanging at shutdown.
             try:
-                await amem.remember(batch, semantic)
+                await amem.remember(batch, semantic, self._embedder)
             except Exception as exc:  # noqa: BLE001
                 log.exception("failed to persist a batch of %d events: %s", len(batch), exc)
             finally:

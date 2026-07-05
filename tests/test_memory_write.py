@@ -24,10 +24,10 @@ def _open(tmp_path, **kw):
 def test_fresh_schema(tmp_path):
     mem = _open(tmp_path)
     cur = mem._conn.execute("PRAGMA user_version")
-    assert cur.fetchone()[0] == 2
+    assert cur.fetchone()[0] == 3
     tables = {r[0] for r in mem._conn.execute(
         "SELECT name FROM sqlite_master WHERE type IN ('table','view')")}
-    assert {"summaries", "context", "context_fts"} <= tables
+    assert {"summaries", "context", "context_fts", "embeddings"} <= tables
     cols = {r[1] for r in mem._conn.execute("PRAGMA table_info(context)")}
     assert "summary" not in cols           # fresh schema is normalized
     assert {"summary_id", "content_hash"} <= cols

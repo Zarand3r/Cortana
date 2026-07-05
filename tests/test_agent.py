@@ -114,6 +114,17 @@ def test_loop_honors_sensor_image_dedup(make_memory):
     assert loop_obj.metrics.ocr_skipped == 2      # both dedup frames skipped OCR
 
 
+def test_loop_stores_embeddings_when_embedder_given(make_memory):
+    from cortana.embeddings import FakeEmbedder
+    sensor = ScriptedSensor([_obs("quarterly budget spreadsheet", app="Numbers")])
+    mem = make_memory()
+    loop_obj = AgentLoop(_cfg(batch_size=1), mem, FakeLLMBackend(), sensor,
+                         embedder=FakeEmbedder())
+    _run(loop_obj, max_ticks=1)
+    n = mem._conn.execute("SELECT count(*) FROM embeddings").fetchone()[0]
+    assert n == 1                                  # semantic vector stored on write
+
+
 def test_loop_populates_working_memory_with_changed_observations(make_memory):
     sensor = ScriptedSensor([_obs("screen A"), _obs("screen A"),   # repeat -> heartbeat
                              _obs("screen B", app="Mail")])

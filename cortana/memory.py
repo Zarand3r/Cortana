@@ -9,14 +9,16 @@ Pure stdlib (sqlite3) — imports with no native deps (P7).
 
 from __future__ import annotations
 
+import json
 import sqlite3
 import threading
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from cortana.embeddings import cosine, reciprocal_rank_fusion
 from cortana.perception import Observation, Semantic
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 # Fresh-DB schema (normalized — no `summary` text column on `context`).
 _FRESH_SCHEMA = """
@@ -59,6 +61,15 @@ CREATE TRIGGER context_au AFTER UPDATE ON context BEGIN
     INSERT INTO context_fts(context_fts, rowid, ocr_text) VALUES('delete', old.id, old.ocr_text);
     INSERT INTO context_fts(rowid, ocr_text) VALUES (new.id, new.ocr_text);
 END;
+"""
+
+# Semantic index (v3): one embedding vector per context row with OCR text. Cascade
+# so pruning a context row drops its vector (needs foreign_keys=ON).
+_EMBEDDINGS_SCHEMA = """
+CREATE TABLE embeddings (
+    context_id INTEGER PRIMARY KEY REFERENCES context(id) ON DELETE CASCADE,
+    vec        TEXT NOT NULL
+);
 """
 
 GIB = 1024 ** 3
@@ -104,11 +115,15 @@ class Memory:
         fresh schema for a new DB; upgrades a legacy v0 DB additively (P8)."""
         if self._user_version() >= SCHEMA_VERSION:
             return
-        if self._table_exists("context"):
-            self._upgrade_legacy()
-        else:
+        if not self._table_exists("context"):
             self._conn.executescript(_FRESH_SCHEMA)
             self._conn.executescript(_FTS_SCHEMA)
+            self._conn.executescript(_EMBEDDINGS_SCHEMA)
+        else:
+            if not self._table_exists("summaries"):        # legacy v0 -> v2 structures
+                self._upgrade_legacy()
+            if not self._table_exists("embeddings"):        # v2 -> v3 semantic index
+                self._conn.executescript(_EMBEDDINGS_SCHEMA)
         self._conn.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
         self._conn.commit()
 
@@ -136,8 +151,8 @@ class Memory:
     def _truncate(self, text: str | None) -> str:
         return (text or "")[: self.ocr_max_chars]
 
-    def _insert_event(self, obs: Observation, *, summary_id, skip_reason=None) -> None:
-        self._conn.execute(
+    def _insert_event(self, obs: Observation, *, summary_id, skip_reason=None) -> int:
+        cur = self._conn.execute(
             "INSERT INTO context "
             "(ts, app_name, bundle_id, window_title, ocr_text, captured, "
             " skip_reason, content_hash, summary_id) "
@@ -149,10 +164,12 @@ class Memory:
                 obs.content_hash or None, summary_id,
             ),
         )
+        return cur.lastrowid
 
     def remember(self, observations: list[Observation],
-                 semantic: Semantic | None) -> int | None:
-        """Persist a batch: one summary row (if any) + its events, linked by FK.
+                 semantic: Semantic | None, embedder=None) -> int | None:
+        """Persist a batch: one summary row (if any) + its events, linked by FK. When
+        ``embedder`` is given, store a semantic vector for each event's OCR text.
         Returns the summary_id (or None when there was no semantic record)."""
         summary_id = None
         # `with self._conn` is one atomic transaction: on any failure the summary and
@@ -168,7 +185,15 @@ class Memory:
                 )
                 summary_id = cur.lastrowid
             for obs in observations:
-                self._insert_event(obs, summary_id=summary_id)
+                cid = self._insert_event(obs, summary_id=summary_id)
+                if embedder is not None and obs.ocr_text:
+                    try:
+                        vec = embedder.embed(obs.ocr_text)
+                    except Exception:  # noqa: BLE001 - embedding is best-effort; a missing
+                        continue        # model must never lose the row (keyword search still works)
+                    self._conn.execute(
+                        "INSERT OR REPLACE INTO embeddings(context_id, vec) VALUES (?, ?)",
+                        (cid, json.dumps(vec)))
         return summary_id
 
     def remember_dropped(self, observation: Observation) -> None:
@@ -251,10 +276,19 @@ class Memory:
 
     def recall(self, query: str | None = None, *, since: str | None = None,
                until: str | None = None, app: str | None = None,
-               limit: int = 50) -> list[dict]:
-        """Retrieve memories, newest first. Full-text when ``query`` is given (FTS5),
-        else a filtered scan. Each row carries ts + app_name as a citation (P5) and
-        its batch ``summary`` (semantic memory; NULL for heartbeats/dropped)."""
+               limit: int = 50, embedder=None) -> list[dict]:
+        """Retrieve memories. With ``embedder`` + ``query``: **hybrid** search —
+        keyword (FTS5) and semantic (embedding cosine) fused by Reciprocal Rank
+        Fusion, best-match first. Otherwise: full-text (FTS5) or a recency scan,
+        newest-first. Each row carries ts + app_name as a citation (P5) and its batch
+        ``summary`` (NULL for dropped rows)."""
+        if embedder is not None and query:
+            try:
+                with self._lock:
+                    ids = self._hybrid_ids(query, embedder, since, until, app, max(1, limit))
+                    return self._rows_by_ids(ids)
+            except Exception:  # noqa: BLE001 - embedder down -> fall back to keyword search
+                pass
         cols = ", ".join(f"c.{c}" for c in self._COLS) + ", s.summary"
         join = " LEFT JOIN summaries s ON s.id = c.summary_id"
         params: list = []
@@ -294,6 +328,54 @@ class Memory:
                 params[0] = '"' + query.replace('"', '""') + '"'
                 rows = list(self._conn.execute(sql, params))
         return [dict(zip(out_cols, row)) for row in rows]
+
+    # --- hybrid (keyword + semantic) retrieval ----------------------------- #
+    def _filter_clauses(self, since, until, app) -> tuple[str, list]:
+        where = ["(c.skip_reason IS NULL OR c.skip_reason != 'unchanged')"]
+        params: list = []
+        if since is not None:
+            where.append("c.ts >= ?"); params.append(since)
+        if until is not None:
+            where.append("c.ts < ?"); params.append(until)
+        if app is not None:
+            where.append("c.app_name = ?"); params.append(app)
+        return " AND ".join(where), params
+
+    def _hybrid_ids(self, query, embedder, since, until, app, limit) -> list[int]:
+        """Fuse FTS keyword ranking with embedding-cosine ranking via RRF. Caller
+        holds the lock."""
+        filt, fparams = self._filter_clauses(since, until, app)
+        candidate_k = max(limit * 5, 50)          # deeper candidate pools -> better fusion
+        # keyword ids, ranked by FTS5 relevance (rank), crash-proof on raw input
+        kw_sql = (f"SELECT c.id FROM context_fts JOIN context c ON c.id=context_fts.rowid "
+                  f"WHERE context_fts MATCH ? AND {filt} ORDER BY rank LIMIT ?")
+        try:
+            kw = [r[0] for r in self._conn.execute(kw_sql, [query, *fparams, candidate_k])]
+        except sqlite3.OperationalError:
+            phrase = '"' + query.replace('"', '""') + '"'
+            kw = [r[0] for r in self._conn.execute(kw_sql, [phrase, *fparams, candidate_k])]
+        # semantic ids, ranked by cosine to the query vector (brute-force; bounded by
+        # retention — fine at this scale)
+        qvec = embedder.embed(query)
+        sem_rows = self._conn.execute(
+            f"SELECT e.context_id, e.vec FROM embeddings e "
+            f"JOIN context c ON c.id=e.context_id WHERE {filt}", fparams)
+        sims = [(cid, cosine(qvec, json.loads(vec))) for cid, vec in sem_rows]
+        sims.sort(key=lambda t: t[1], reverse=True)
+        sem = [cid for cid, _ in sims[:candidate_k]]
+        return reciprocal_rank_fusion([kw, sem])[:limit]
+
+    def _rows_by_ids(self, ids: list[int]) -> list[dict]:
+        """Fetch context rows for ``ids``, preserving the given (fused) order."""
+        if not ids:
+            return []
+        cols = ", ".join(f"c.{c}" for c in self._COLS) + ", s.summary"
+        placeholders = ",".join("?" * len(ids))
+        sql = (f"SELECT {cols} FROM context c LEFT JOIN summaries s ON s.id=c.summary_id "
+               f"WHERE c.id IN ({placeholders})")
+        by_id = {row[0]: row for row in self._conn.execute(sql, ids)}   # row[0] = c.id
+        out_cols = (*self._COLS, "summary")
+        return [dict(zip(out_cols, by_id[i])) for i in ids if i in by_id]
 
     # --- introspection ----------------------------------------------------- #
     def counts(self) -> dict[str, int]:

@@ -232,8 +232,8 @@ memory; and **LongMemEval** is the standard yardstick for long-horizon recall
 | Episodic store, time-stamped | ✅ `context` | — | — |
 | Change-detection / dedup on encode | ✅ (ahead of most) | — | — |
 | On-device privacy + redaction | ✅ (differentiator) | — | — |
-| **Semantic / vector retrieval** | ❌ keyword only | **biggest gap** | **P0** |
-| **Hybrid retrieval (BM25 + dense + RRF + rerank)** | ⚠️ BM25-style only, **recency-ordered, no relevance rank** | high | **P0** |
+| **Semantic / vector retrieval** | ✅ local embeddings (opt-in `embed=true`) | rerank stage still absent | done (P0) |
+| **Hybrid retrieval (BM25 + dense + RRF)** | ✅ FTS + embedding cosine fused by RRF; cross-encoder rerank not yet | rerank = P2 | done (P0) |
 | **Reflection / consolidation** (episodes → durable insights) | ❌ per-batch summaries only | high | **P1** |
 | Importance scoring + recency-decay ranking (Generative Agents) | ❌ newest-first only | medium | **P1** |
 | **Explicit "saved" facts vs derived** (ChatGPT) + user profile | ❌ no user-facts/profile layer | medium | **P1** |
@@ -246,12 +246,14 @@ memory; and **LongMemEval** is the standard yardstick for long-horizon recall
 
 ## 10. Recommended roadmap (prioritized, on-device)
 
-1. **Semantic + hybrid retrieval (P0).** Embed `ocr_text`/summaries with a **local**
-   model (e.g. `nomic-embed-text` via Ollama, or MLX) at write time; store vectors in
-   SQLite (`sqlite-vec`, or brute-force cosine at our scale). Retrieve = **FTS (BM25) +
-   vector**, fuse with **RRF**, order by fused score (not just recency). This is the
-   single biggest recall-quality win and closes the two P0 gaps together. Keep it
-   **hybrid** — BM25 still wins on exact terms (app names, error codes).
+1. ~~**Semantic + hybrid retrieval (P0).**~~ **DONE.** `cortana/embeddings.py` +
+   `Memory` now embed `ocr_text` with a local model (`nomic-embed-text` via Ollama,
+   opt-in `embed=true`), store vectors in a SQLite `embeddings` table (brute-force
+   cosine at our scale), and `recall(query, embedder=…)` fuses **FTS (keyword) +
+   vector (semantic)** via **Reciprocal Rank Fusion**. Best-effort: a missing model
+   never loses rows (write) and falls back to keyword (read). *Remaining:* a
+   cross-encoder **rerank** stage (P2) and a batched/`sqlite-vec` index if the linear
+   scan ever gets slow.
 2. **A local eval harness (P1).** A small LongMemEval-style set of
    question→expected-memory pairs over a seeded DB, wired into `ci/`. Measure recall
    *before* optimizing retrieval so §10.1 is data-driven, not vibes.

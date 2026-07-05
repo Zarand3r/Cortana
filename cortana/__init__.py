@@ -6,6 +6,7 @@ Package subsystems (see docs/DESIGN.md):
   - backends:   LLM backends (fake / Ollama / MLX)
   - memory:     tiered episodic + semantic long-term memory over SQLite
   - working_memory: short-term rolling buffer of recent observations (in RAM)
+  - embeddings: local text embeddings + fusion for hybrid (keyword+semantic) recall
 """
 
-__all__ = ["config", "perception", "backends", "memory", "working_memory"]
+__all__ = ["config", "perception", "backends", "memory", "working_memory", "embeddings"]

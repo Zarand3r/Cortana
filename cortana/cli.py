@@ -20,6 +20,7 @@ from cortana.advisor import recommend
 from cortana.agent import AgentLoop
 from cortana.backends import make_backend
 from cortana.config import Config
+from cortana.embeddings import make_embedder
 from cortana.memory import Memory
 from cortana.perception import make_demo_sensor
 from cortana.reasoning import reason
@@ -128,15 +129,18 @@ def make_loop(cfg: Config, *, sensor=None,
     readers (chat/recommend) can see the loop's recent activity."""
     memory = open_memory(cfg, check_same_thread=False)   # writes funnel through the db executor
     backend = make_backend(cfg.backend, cfg)
-    return AgentLoop(cfg, memory, backend, sensor, working_memory=working_memory), memory
+    embedder = make_embedder("ollama", cfg) if cfg.embed else None   # semantic index on write
+    return (AgentLoop(cfg, memory, backend, sensor,
+                      working_memory=working_memory, embedder=embedder), memory)
 
 
 def cmd_ask(args) -> int:
     cfg = _config_from_args(args)
     backend = make_backend(cfg.backend, cfg)
+    embedder = make_embedder("ollama", cfg) if cfg.embed else None   # hybrid recall
     memory = open_memory(cfg)
     try:
-        answer = reason(args.question, memory, backend,
+        answer = reason(args.question, memory, backend, embedder=embedder,
                         since=args.since, until=args.until, app=args.app, limit=args.limit)
     finally:
         memory.close()

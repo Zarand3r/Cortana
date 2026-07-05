@@ -51,6 +51,8 @@ class Config:
     ollama_host: str = "http://127.0.0.1:11434"
     batch_size: int = 4                           # observations per extract_meaning call
     batch_window: float = 60.0                    # ...or flush after this many seconds
+    embed: bool = False                           # opt-in: semantic/hybrid retrieval
+    embed_model: str = "nomic-embed-text"         # local Ollama embedding model
 
     # --- chat app (local ChatGPT-style web UI) ---
     chat_host: str = "127.0.0.1"                  # bind address — localhost only
@@ -92,6 +94,8 @@ class Config:
         ("llm", "ollama_host"): ("ollama_host", str),
         ("llm", "batch_size"): ("batch_size", int),
         ("llm", "batch_window"): ("batch_window", float),
+        ("llm", "embed"): ("embed", _as_bool),
+        ("llm", "embed_model"): ("embed_model", str),
         ("chat", "host"): ("chat_host", str),
         ("chat", "port"): ("chat_port", int),
         ("chat", "system_prompt"): ("chat_system_prompt", str),

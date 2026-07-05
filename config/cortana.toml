@@ -17,6 +17,8 @@ model = "qwen2.5:7b-instruct"   # feasible default; "qwen2.5:72b-instruct-q6_K" 
 ollama_host = "http://127.0.0.1:11434"
 batch_size = 4                  # observations summarized per LLM call
 batch_window = 60.0             # ...or flush a partial batch after this many seconds
+embed = false                   # opt-in: semantic/hybrid retrieval (needs an embedding model)
+embed_model = "nomic-embed-text"  # local Ollama embedding model: `ollama pull nomic-embed-text`
 
 [chat]
 host = "127.0.0.1"              # bind address for the local chat web UI (localhost only)
