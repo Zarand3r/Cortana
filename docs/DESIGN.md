@@ -192,9 +192,11 @@ reconstruct historical batch boundaries (lossy) — documented.
 **Change-detection gate (new — biggest efficiency + quality win):** in
 `capture_once`, compute `content_hash = sha256(normalize(app, title, ocr_text))`
 where `normalize` lowercases, collapses whitespace, and strips standalone
-time/date tokens (regex). If equal to the last stored event's hash, write a
-lightweight `skip_reason="unchanged"` heartbeat and **do not enqueue for
-summarization** — idle screens stop driving the model.
+time/date tokens (regex). If equal to the last event's hash, the frame is **not
+persisted at all** (compaction) and not enqueued — idle screens neither drive the
+model nor grow the DB. Only distinct episodes become rows; dwell time is the gap
+between consecutive episode timestamps. (This matters at the 1s default capture
+rate — see docs/MEMORY.md §Compaction.)
 
 **Visible backpressure:** on `QueueFull`, the evicted oldest event is **persisted**
 with `skip_reason="dropped_backpressure"` (fast path: direct synchronous insert,
@@ -209,7 +211,7 @@ secure_input?  ──yes──▶ skip("secure_input_active")
 excluded app?  ──yes──▶ skip("excluded_app")
 capture==None? ──yes──▶ skip("capture_blocked_or_no_permission")
 ocr error?     ──yes──▶ skip("ocr_error")          [keep metadata]
-unchanged?     ──yes──▶ skip("unchanged")          [NEW: store heartbeat, no LLM]
+unchanged?     ──yes──▶ count only, store nothing  [compaction; dwell = ts gap]
 otherwise      ──────▶ redact → enqueue full event
 ```
 

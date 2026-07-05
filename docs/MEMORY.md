@@ -26,7 +26,7 @@ Cortana is a perceptual agent, so memory is the product, not a feature. Principl
 | Tier | Cognitive analogue | Where it lives | Lifetime | Code |
 |---|---|---|---|---|
 | **Sensory buffer** | iconic/sensory register | `asyncio.Queue(maxsize=queue_max)` + the consumer `batch` | milliseconds–seconds (drained continuously) | `agent.py` |
-| **Working (short-term) memory** | working memory | `WorkingMemory` — bounded in-RAM deque of recent *changed* observations | minutes (rolling, `working_memory_max=50`) | `working_memory.py` |
+| **Working (short-term) memory** | working memory | `WorkingMemory` — bounded in-RAM deque of recent *changed* observations | the recent session (rolling, `working_memory_max=200` distinct activities, ~1–2 MB RAM) | `working_memory.py` |
 | **Long-term — episodic** | episodic memory | SQLite `context` table (per-perception rows) | days (retention: 90d / 2 GB) | `memory.py` |
 | **Long-term — semantic** | semantic memory | SQLite `summaries` table (one LLM summary per batch, FK-referenced) | days (same retention) | `memory.py` |
 
@@ -66,11 +66,11 @@ rows. Episodic rows are the *what/when/where*; the summary is the *meaning*.
 ## 4. Write path (encoding)
 
 ```
-every ~interval (30s), serially:
+every ~interval (1s by default), serially:
   perceive()  → Observation (app, title, screenshot→OCR text)   [perception.py]
   redact()    → scrub secrets before anything is stored          [redaction.py]
   change-detect: content_hash(normalize(app,title,ocr))          [perception.py]
-     unchanged?  → store an 'unchanged' heartbeat (empty OCR, no LLM)  [dwell signal]
+     unchanged?  → count it, store NOTHING  (compaction — see below)
      changed?    → working_memory.add(obs)   ← short-term memory
                  → enqueue for summarization (drop-oldest + persist on backpressure)
   consumer: collect a batch (≤ batch_size or ≤ batch_window)
@@ -78,12 +78,26 @@ every ~interval (30s), serially:
           → Memory.remember(batch, semantic)  (atomic: summary + events in one txn)
 ```
 
+**Compaction (why 1s capture doesn't blow up disk).** An unchanged frame is **not
+persisted**. Only *distinct on-screen activities* ("episodes" — a changed screen)
+become rows, so **storage scales with context switches, not wall-clock seconds**:
+sit on one screen for an hour and it's one row, not 3,600. **Dwell time** is
+recoverable from the gap between an episode's `ts` and the next episode's `ts` — no
+per-second bookkeeping needed. (Earlier we stored an "unchanged" heartbeat per idle
+tick; at 1s that would be ~86k dead rows/day, and they were already excluded from
+recall — pure overhead. Removed.)
+
 Key properties:
-- **Change detection** avoids re-encoding an idle screen (the dedup gate). Heartbeats
-  record dwell but never drive the LLM and are **excluded from recall**.
+- **Change detection** avoids re-encoding an idle screen (the dedup gate).
 - **Degradation is visible:** if the LLM fails, events are still stored (no summary)
   and `llm_errors` is counted; backpressure evictions are persisted as
   `dropped_backpressure`. Nothing is lost silently.
+
+> **Capture-rate caveat (CPU/power).** Change detection runs *after* OCR, so at 1s we
+> still screenshot + OCR every second — that is real CPU/GPU/battery cost on a
+> laptop. The natural next optimization is a cheap **pre-OCR perceptual/image hash**
+> to skip OCR on visually-identical frames (deferred; would make 1s cheap). Disk is
+> already handled by compaction above.
 
 ---
 
@@ -96,7 +110,7 @@ Two retrieval surfaces, both `Memory.recall(query, since, until, app, limit)`:
   never crashes.
 - **Recency scan** — when there's no query (or no content words), the most-recent
   rows.
-- Always excludes `unchanged` heartbeats; results ordered **newest-first**; `limit`
+- Always excludes any legacy `unchanged` rows; results ordered **newest-first**; `limit`
   clamped ≥ 1; reads serialized by a lock (chat serves on multiple threads).
 
 Consumers:

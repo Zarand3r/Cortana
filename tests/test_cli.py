@@ -14,7 +14,7 @@ from cortana.memory import Memory
 
 def test_build_config_defaults_match_config_file():
     cfg = build_config(["run"])
-    assert cfg.interval == 30.0
+    assert cfg.interval == 1.0
     assert cfg.backend == "ollama"
     assert cfg.model == "qwen2.5:7b-instruct"
 

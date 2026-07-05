@@ -25,7 +25,7 @@ running that cycle robustly and, later, at wider scope.
   every ~interval:                                      collect batch (≤ size OR ≤ window)
    frontmost_app + capture  ── put ──▶ [ ][ ][ ] ── take ──▶ extract_meaning(batch, backend)
    + ocr → Observation                                   → Memory.remember(batch, semantic)
-   changed()? no → heartbeat (no enqueue, no LLM)
+   changed()? no → idle: count only, store nothing (compaction; dwell = ts gap)
    queue full?  → Memory.remember_dropped() + drops++
 
  Startup: Memory.prune()   (periodic re-prune deferred to the Phase 6 daemon)

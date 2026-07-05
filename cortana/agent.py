@@ -12,7 +12,6 @@ import contextlib
 import logging
 import signal
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import replace
 from datetime import datetime, timezone
 from enum import Enum, auto
 
@@ -166,12 +165,13 @@ class AgentLoop:
                     break
 
     async def _route(self, obs, prev_hash, queue, amem) -> str:
-        """Apply the change-detection gate and enqueue / heartbeat / drop."""
+        """Apply the change-detection gate and enqueue / drop. Compaction: an
+        unchanged frame is NOT persisted — at 1s capture that would be O(seconds)
+        dead rows. Only distinct 'episodes' (changed screens) become rows; dwell
+        time is recoverable from the gap to the next episode's timestamp."""
         if plan_disposition(prev_hash, obs) is Disposition.UNCHANGED:
             self.metrics.unchanged += 1
-            heartbeat = replace(obs, skip_reason="unchanged", ocr_text="")
-            await amem.remember([heartbeat], None)   # dwell-time signal, no LLM
-            return prev_hash
+            return prev_hash                         # idle: count it, store nothing
         self.metrics.changed += 1
         self.working.add(obs)                        # short-term memory: recent activity
         try:

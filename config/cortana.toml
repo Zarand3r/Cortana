@@ -6,7 +6,7 @@
 # in-code defaults.
 
 [perception]
-interval = 30.0                 # seconds between screen captures
+interval = 1.0                  # seconds between screen captures
 ocr_languages = ["en-US"]       # Vision OCR languages
 ocr_max_chars = 6000            # truncate OCR before store and before the prompt
 read_focused_text = false       # opt-in Accessibility focused-field read (high-sensitivity)
@@ -28,7 +28,7 @@ db_path = "~/.local_mac_context.db"
 retention_days = 90             # age bound — drop memories older than this
 max_db_gib = 2.0                # size bound — evict oldest beyond this
 queue_max = 256                 # backpressure bound on the perception->memory queue
-working_memory_max = 50         # recent observations kept in RAM (short-term memory)
+working_memory_max = 200        # recent distinct observations kept in RAM (short-term memory)
 
 [privacy]
 redact = true                   # scrub high-confidence secrets (keys, tokens, cards, SSNs) before store

@@ -40,7 +40,7 @@ DEFAULT_CONFIG_PATH = Path(__file__).resolve().parent.parent / "config" / "corta
 @dataclass
 class Config:
     # --- perception ---
-    interval: float = 30.0                        # seconds between captures
+    interval: float = 1.0                         # seconds between captures
     ocr_languages: tuple[str, ...] = ("en-US",)
     ocr_max_chars: int = 6000                     # truncate OCR before store AND prompt
     read_focused_text: bool = False               # opt-in Accessibility text grab
@@ -69,7 +69,7 @@ class Config:
     retention_days: int = 90                      # age bound
     max_db_bytes: int = 2 * GIB                   # size bound
     queue_max: int = 256                          # backpressure bound
-    working_memory_max: int = 50                  # recent observations kept in RAM (short-term memory)
+    working_memory_max: int = 200                 # recent distinct observations kept in RAM (short-term memory)
 
     # --- privacy ---
     redact: bool = True                           # scrub high-confidence secrets pre-store

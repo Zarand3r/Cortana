@@ -125,21 +125,19 @@ def test_perceive_remember_recall_end_to_end(make_memory):
     assert mem.counts()["summaries"] == be.calls          # one summary per batch
 
 
-# --- P11: idle screens never call the LLM ----------------------------------- #
+# --- idle screens never call the LLM and are NOT persisted (compaction) ------ #
 
-def test_idle_screens_skip_llm(make_memory):
+def test_idle_screens_skip_llm_and_are_not_stored(make_memory):
     sensor = ScriptedSensor([_obs("same screen")] * 5 + [_obs("different screen")])
     mem, be = make_memory(), FakeLLMBackend()
     _run(AgentLoop(_cfg(batch_size=1), mem, be, sensor), max_ticks=6)
 
     assert be.calls == 2                                   # 2 distinct screens, not 6
-    assert mem.counts()["context"] == 6                    # all 6 persisted
-    # the 4 repeats are stored as dwell heartbeats ...
-    hb = mem._conn.execute(
-        "SELECT count(*) FROM context WHERE skip_reason='unchanged'").fetchone()[0]
-    assert hb == 4
-    # ... but recall never surfaces heartbeats (they'd be blank/stale rows)
-    assert all(r["skip_reason"] != "unchanged" for r in mem.recall(limit=100))
+    # Compaction: only the 2 distinct episodes are stored — idle frames aren't rows.
+    # (At 1s capture this is what keeps the DB from exploding.)
+    assert mem.counts()["context"] == 2
+    assert mem._conn.execute(
+        "SELECT count(*) FROM context WHERE skip_reason='unchanged'").fetchone()[0] == 0
 
 
 def test_changed_but_no_ocr_text_skips_llm(make_memory):
