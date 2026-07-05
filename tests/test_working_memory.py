@@ -38,6 +38,14 @@ def test_recent_limit_returns_last_n():
     assert [o.ocr_text for o in wm.recent(limit=2)] == ["s3", "s4"]
 
 
+def test_recent_limit_zero_returns_none_not_everything():
+    wm = WorkingMemory(maxlen=10)
+    for i in range(3):
+        wm.add(_obs(f"s{i}", ts=f"2026-07-04T10:0{i}:00+00:00"))
+    assert wm.recent(limit=0) == []          # NOT items[-0:] == whole list
+    assert len(wm.recent(limit=None)) == 3
+
+
 def test_since_filters_by_timestamp():
     wm = WorkingMemory(maxlen=10)
     wm.add(_obs("old", ts="2026-07-04T09:00:00+00:00"))

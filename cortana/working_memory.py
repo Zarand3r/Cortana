@@ -30,10 +30,14 @@ class WorkingMemory:
             self._buf.append(observation)
 
     def recent(self, limit: int | None = None) -> list[Observation]:
-        """A chronological (oldest→newest) snapshot; the last ``limit`` if given."""
+        """A chronological (oldest→newest) snapshot; the last ``limit`` if given.
+        ``limit=None`` returns all; ``limit<=0`` returns none (not everything —
+        ``items[-0:]`` would be the whole list)."""
         with self._lock:
             items = list(self._buf)
-        return items[-limit:] if limit else items
+        if limit is None:
+            return items
+        return items[-limit:] if limit > 0 else []
 
     def since(self, ts_iso: str) -> list[Observation]:
         """Observations with ``ts >= ts_iso`` (ISO-8601 UTC), chronological."""
