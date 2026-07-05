@@ -45,21 +45,11 @@ def test_changed():
     assert changed("other", h) is True
 
 
-# --- pre-OCR image dedup (perceptual-hash similarity) ----------------------- #
+# --- pre-OCR image dedup (exact hash: safe by construction) ----------------- #
 
-def test_hamming_distance():
-    from cortana.perception import hamming_distance
-    assert hamming_distance(0b1010, 0b1010) == 0
-    assert hamming_distance(0b1010, 0b1011) == 1
-    assert hamming_distance(0b0000, 0b1111) == 4
-
-
-def test_images_similar_tolerates_small_diffs_but_flags_big_ones():
-    from cortana.perception import images_similar
-    base = 0
-    assert images_similar(base, base, threshold=4) is True          # identical
-    assert images_similar(base, 0b111, threshold=4) is True         # 3 bits -> ~unchanged
-    assert images_similar(base, (1 << 40) - 1, threshold=4) is False  # 40 bits -> changed
+def test_screen_sensor_dedup_defaults_on():
+    from cortana.perception import ScreenSensor
+    assert ScreenSensor(("en-US",))._dedup is True                   # battery win, safe
 
 
 # --- prompt building -------------------------------------------------------- #

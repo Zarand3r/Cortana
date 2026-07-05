@@ -93,17 +93,16 @@ Key properties:
   and `llm_errors` is counted; backpressure evictions are persisted as
   `dropped_backpressure`. Nothing is lost silently.
 
-**Pre-OCR image dedup (opt-in battery optimization — OFF by default).** OCR is the
-expensive step, so with `image_dedup=true` the sensor computes a cheap **perceptual
-image hash (dHash)** and skips OCR when the frame is ~unchanged (`ScreenSensor`,
-`metrics.ocr_skipped`) — a battery win during idle. **Caveat (why it's off by
-default):** a coarse perceptual hash sees *layout*, not *text*, so it can treat a
-same-layout content change (typing/scrolling in one app) as "unchanged" and skip OCR
-— **freezing memory** so recall returns stale activity. It can only run locally on a
-real screen, so it's unverified in CI. With `image_dedup=false` (default) **every
-frame is OCR'd and change-detection runs on the OCR text** (correct, higher battery
-cost). The safe upgrade is a *near-exact* image hash (high-res, tiny threshold) that
-only skips truly static frames; tune on-device via `metrics.ocr_skipped`.
+**Pre-OCR image dedup (on by default — safe).** OCR is the expensive per-frame step,
+so `ScreenSensor` first computes an **exact hash of the screenshot's pixels**; if the
+frame is **byte-identical** to the last one it returns an `unchanged` observation and
+skips OCR (`metrics.ocr_skipped`) — the battery win during genuinely static periods
+(reading, idle). It is **safe by construction**: any visible change (typing, scroll,
+new text, even the clock) alters pixels → the hash differs → OCR runs, so content is
+never missed. (An earlier *coarse perceptual* hash saw layout not text and froze
+memory during same-layout editing — replaced by this exact hash.) Any hashing error
+falls back to OCR. Two dedup layers stack: **image** dedup skips OCR on identical
+frames; **text** dedup (OCR-content hash) then skips the LLM + storage.
 
 ---
 

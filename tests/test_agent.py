@@ -97,13 +97,14 @@ def test_backend_failure_degrades_and_does_not_hang(make_memory):
     assert loop_obj.metrics.llm_errors == 2
 
 
-def test_image_dedup_is_off_by_default():
-    # Regression: image dedup on-by-default froze memory (a coarse hash misses
-    # same-layout text changes). It must be opt-in so the default OCRs every frame.
+def test_image_dedup_uses_safe_exact_hash_on_by_default():
+    # Image dedup is on by default again — but now with an EXACT hash: it only skips
+    # OCR on byte-identical frames, so a content change can never be missed (the
+    # coarse perceptual hash that froze memory was replaced).
     from cortana.config import Config
     from cortana.perception import ScreenSensor
-    assert Config().image_dedup is False
-    assert ScreenSensor(("en-US",))._dedup is False
+    assert Config().image_dedup is True
+    assert ScreenSensor(("en-US",))._dedup is True
 
 
 def test_loop_honors_sensor_image_dedup(make_memory):
