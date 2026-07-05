@@ -41,15 +41,15 @@ PY
 say "Python $(python3 -c 'import sys;print("%d.%d"%sys.version_info[:2])') OK"
 
 # 2) venv + install (core is dependency-free; extras add native/GUI/MLX bits)
-say "Creating .venv and installing"
+say "Creating .venv and installing (editable — so updates take effect without reinstall)"
 python3 -m venv .venv
 ./.venv/bin/pip -q install --upgrade pip
 if [[ -n "$EXTRAS" ]]; then
-  ./.venv/bin/pip -q install ".[$EXTRAS]"
-  say "Installed cortana[$EXTRAS]"
+  ./.venv/bin/pip -q install -e ".[$EXTRAS]"
+  say "Installed cortana[$EXTRAS] (editable)"
 else
-  ./.venv/bin/pip -q install .
-  say "Installed cortana (core CLI)"
+  ./.venv/bin/pip -q install -e .
+  say "Installed cortana (core CLI, editable)"
 fi
 
 # 3) local model

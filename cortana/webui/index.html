@@ -139,7 +139,9 @@
         const data = frame.slice(5).trim();
         if (data === "[DONE]") { cursor.remove(); return full; }
         try {
-          const tok = JSON.parse(data).token || "";
+          const obj = JSON.parse(data);
+          if (obj.error) { cursor.remove(); bodyEl.textContent = "⚠ " + obj.error; return full; }
+          const tok = obj.token || "";
           full += tok;
           bodyEl.insertBefore(document.createTextNode(tok), cursor);
           log.scrollTop = log.scrollHeight;
@@ -172,6 +174,22 @@
   input.addEventListener("keydown", function (e) {
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); submit(); }
   });
+
+  // Restore the server-side conversation so reopening the window keeps the chat
+  // (it persists until you quit the app), rather than starting blank each time.
+  async function loadHistory() {
+    try {
+      const resp = await fetch("/api/history");
+      if (!resp.ok) return;
+      const data = await resp.json();
+      for (const m of (data.messages || [])) {
+        if (m.role !== "user" && m.role !== "assistant") continue;
+        addMsg(m.role, m.content);
+        history.push({ role: m.role, content: m.content });
+      }
+    } catch (e) {}
+  }
+  loadHistory();
 })();
 </script>
 </body>

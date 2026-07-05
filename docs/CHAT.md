@@ -51,8 +51,10 @@ repo's standing constraints:
 
 ### 1.3 What it is *not* (v1 scope)
 
-- **No server-side conversation store.** History lives in the browser tab and is
-  re-sent on every turn. Closing the tab discards it. (Rationale in §7.)
+- **Server-side conversation, in memory, until quit.** The server keeps the
+  conversation (`Conversation`) for its lifetime; on load the page restores it via
+  `GET /api/history`, so closing and reopening the window keeps the chat. It is
+  **not written to disk** (privacy) — quitting the app clears it.
 - **No authentication / multi-user.** It binds `127.0.0.1`; the trust boundary is
   "processes on this Mac."
 - **RAG over Cortana's memory: now built.** When `cortana chat` is launched with a

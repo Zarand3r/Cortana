@@ -14,6 +14,7 @@ marked ``# pragma: no cover``.
 from __future__ import annotations
 
 import json
+import threading
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -21,6 +22,32 @@ from importlib.resources import files
 
 from cortana.backends import LLMBackend, Message, Role
 from cortana.memory import Memory
+
+
+class Conversation:
+    """Server-side chat history, held for the app's lifetime so the conversation
+    survives closing and reopening the window (persists until you quit), rather than
+    living only in the browser page. Thread-safe (the chat server is multi-threaded)."""
+
+    def __init__(self) -> None:
+        self._msgs: list[Message] = []
+        self._lock = threading.Lock()
+
+    def replace(self, messages: Iterable[Message]) -> None:
+        with self._lock:
+            self._msgs = list(messages)
+
+    def add(self, message: Message) -> None:
+        with self._lock:
+            self._msgs.append(message)
+
+    def snapshot(self) -> list[Message]:
+        with self._lock:
+            return list(self._msgs)
+
+    def clear(self) -> None:
+        with self._lock:
+            self._msgs = []
 from cortana.reasoning import question_to_fts
 
 _CONTEXT_PER_MEMORY_CHARS = 400   # cap each memory in the context block
@@ -122,6 +149,16 @@ def sse_frames(tokens: Iterable[str]) -> Iterator[bytes]:
     yield b"data: [DONE]\n\n"
 
 
+def _record_reply(tokens: Iterable[str], conversation: "Conversation") -> Iterator[str]:
+    """Pass tokens through, accumulating them, and append the finished assistant turn
+    to the server-side conversation so it persists across window reopens."""
+    parts: list[str] = []
+    for token in tokens:
+        parts.append(token)
+        yield token
+    conversation.add(Message(Role.ASSISTANT, "".join(parts)))
+
+
 @dataclass
 class Response:
     """A fully-resolved HTTP response: status, content-type, and an iterable of
@@ -134,12 +171,18 @@ class Response:
 
 def route(method: str, path: str, body: bytes, backend: LLMBackend,
           *, system_prompt: str, index_html: str,
-          memory: Memory | None = None, context_limit: int = 8) -> Response:
+          memory: Memory | None = None, context_limit: int = 8,
+          conversation: "Conversation | None" = None) -> Response:
     """Map a request to a Response. Pure: no sockets, no globals — the whole
-    server contract lives here so it can be tested directly. When ``memory`` is
-    given, the reply is grounded in the user's recent screen activity."""
+    server contract lives here so it can be tested directly. ``memory`` grounds
+    replies in recent screen activity; ``conversation`` (when given) persists the
+    chat server-side so it survives reopening the window."""
     if method == "GET" and path in ("/", "/index.html"):
         return Response(200, "text/html; charset=utf-8", [index_html.encode("utf-8")])
+    if method == "GET" and path == "/api/history":
+        msgs = conversation.snapshot() if conversation is not None else []
+        payload = json.dumps({"messages": [m.to_wire() for m in msgs]}).encode("utf-8")
+        return Response(200, "application/json", [payload])
     if method == "POST" and path == "/api/chat":
         try:
             history = parse_chat_request(body)
@@ -152,7 +195,11 @@ def route(method: str, path: str, body: bytes, backend: LLMBackend,
                                         limit=context_limit)
             context_block = format_context_block(memories)
         messages = build_messages(history, system_prompt, context_block)
-        return Response(200, "text/event-stream", sse_frames(backend.chat(messages)))
+        stream = backend.chat(messages)
+        if conversation is not None:
+            conversation.replace(history)            # full convo incl. the new user turn
+            stream = _record_reply(stream, conversation)   # append the assistant reply
+        return Response(200, "text/event-stream", sse_frames(stream))
     return Response(404, "text/plain; charset=utf-8", [b"not found"])
 
 
@@ -164,13 +211,14 @@ class ChatHandler(BaseHTTPRequestHandler):  # pragma: no cover - native socket I
     system_prompt: str
     index_html: str
     memory: Memory | None = None
+    conversation: "Conversation | None" = None
 
     def _dispatch(self, method: str) -> None:
         length = int(self.headers.get("Content-Length") or 0)
         body = self.rfile.read(length) if length else b""
         resp = route(method, self.path, body, self.backend,
                      system_prompt=self.system_prompt, index_html=self.index_html,
-                     memory=self.memory)
+                     memory=self.memory, conversation=self.conversation)
         self.send_response(resp.status)
         self.send_header("Content-Type", resp.content_type)
         if resp.content_type == "text/event-stream":
@@ -194,7 +242,8 @@ class ChatHandler(BaseHTTPRequestHandler):  # pragma: no cover - native socket I
 
 
 def make_handler(backend: LLMBackend, *, system_prompt: str, index_html: str,
-                 memory: Memory | None = None) -> type[ChatHandler]:
+                 memory: Memory | None = None,
+                 conversation: "Conversation | None" = None) -> type[ChatHandler]:
     """Build a ChatHandler subclass bound to this backend/config (the stdlib
     server instantiates the class per request, so config rides on the type)."""
 
@@ -205,16 +254,18 @@ def make_handler(backend: LLMBackend, *, system_prompt: str, index_html: str,
     _Bound.system_prompt = system_prompt
     _Bound.index_html = index_html
     _Bound.memory = memory
+    _Bound.conversation = conversation
     return _Bound
 
 
 def serve(backend: LLMBackend, *, host: str = "127.0.0.1", port: int = 8808,
-          system_prompt: str,
-          memory: Memory | None = None) -> None:  # pragma: no cover - binds a real socket
-    """Run the chat web server until interrupted. When ``memory`` is given, replies
-    are grounded in the user's recent screen activity."""
+          system_prompt: str, memory: Memory | None = None,
+          conversation: "Conversation | None" = None) -> None:  # pragma: no cover - binds a real socket
+    """Run the chat web server until interrupted. ``memory`` grounds replies in recent
+    screen activity; ``conversation`` persists the chat until the process exits."""
     handler = make_handler(backend, system_prompt=system_prompt,
-                           index_html=load_index(), memory=memory)
+                           index_html=load_index(), memory=memory,
+                           conversation=conversation or Conversation())
     server = ThreadingHTTPServer((host, port), handler)
     try:
         server.serve_forever()
