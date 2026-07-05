@@ -10,6 +10,8 @@ interval = 1.0                  # seconds between screen captures
 ocr_languages = ["en-US"]       # Vision OCR languages
 ocr_max_chars = 6000            # truncate OCR before store and before the prompt
 read_focused_text = false       # opt-in Accessibility focused-field read (high-sensitivity)
+image_dedup = false             # opt-in: skip OCR on ~unchanged frames (battery vs. accuracy — a
+                                # coarse image hash can miss same-layout text changes; off by default)
 
 [llm]
 backend = "ollama"              # "ollama" | "mlx" | "fake"

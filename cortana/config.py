@@ -44,6 +44,9 @@ class Config:
     ocr_languages: tuple[str, ...] = ("en-US",)
     ocr_max_chars: int = 6000                     # truncate OCR before store AND prompt
     read_focused_text: bool = False               # opt-in Accessibility text grab
+    image_dedup: bool = False                     # opt-in: skip OCR on ~identical frames
+                                                  # (saves battery, but a coarse hash can
+                                                  # miss same-layout text changes — off by default)
 
     # --- meaning extraction (LLM) ---
     backend: str = "ollama"                       # "ollama" | "mlx" | "fake"
@@ -89,6 +92,7 @@ class Config:
         ("perception", "ocr_languages"): ("ocr_languages", _as_tuple),
         ("perception", "ocr_max_chars"): ("ocr_max_chars", int),
         ("perception", "read_focused_text"): ("read_focused_text", _as_bool),
+        ("perception", "image_dedup"): ("image_dedup", _as_bool),
         ("llm", "backend"): ("backend", str),
         ("llm", "model"): ("model", str),
         ("llm", "ollama_host"): ("ollama_host", str),

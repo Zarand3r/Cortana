@@ -97,6 +97,15 @@ def test_backend_failure_degrades_and_does_not_hang(make_memory):
     assert loop_obj.metrics.llm_errors == 2
 
 
+def test_image_dedup_is_off_by_default():
+    # Regression: image dedup on-by-default froze memory (a coarse hash misses
+    # same-layout text changes). It must be opt-in so the default OCRs every frame.
+    from cortana.config import Config
+    from cortana.perception import ScreenSensor
+    assert Config().image_dedup is False
+    assert ScreenSensor(("en-US",))._dedup is False
+
+
 def test_loop_honors_sensor_image_dedup(make_memory):
     # A sensor that pre-deduped by image returns skip_reason='unchanged' (OCR skipped).
     # The loop must treat it as unchanged: no LLM, not stored, and counted as an

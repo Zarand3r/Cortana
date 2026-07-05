@@ -90,9 +90,10 @@ class AgentLoop:
         self._memory = memory
         self._backend = backend
         self._embedder = embedder     # when set, store semantic vectors on write
-        # sensor: (ts) -> Observation | None. Default = the live native sensor (with
-        # pre-OCR image dedup); tests inject a fake so the loop runs without PyObjC.
-        self._sensor = sensor or ScreenSensor(config.ocr_languages)
+        # sensor: (ts) -> Observation | None. Default = the live native sensor;
+        # image dedup is opt-in (off by default so content changes are never missed).
+        # Tests inject a fake so the loop runs without PyObjC.
+        self._sensor = sensor or ScreenSensor(config.ocr_languages, dedup=config.image_dedup)
         self.metrics = Metrics()
         # Short-term memory: recent changed observations, live in RAM. Shared with
         # readers (chat/recommend) when injected; otherwise loop-local.

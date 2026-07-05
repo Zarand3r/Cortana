@@ -237,15 +237,17 @@ def image_dhash(cgimage, size: int = 8) -> int:  # pragma: no cover - native mac
 
 
 class ScreenSensor:  # pragma: no cover - native macOS (capture/OCR)
-    """The live sensor with pre-OCR image dedup. Each call captures the screen and
-    computes a cheap perceptual hash; if it's ~unchanged from the last frame it
-    returns an 'unchanged' Observation WITHOUT running OCR — the expensive step —
-    making 1s capture cheap on battery during idle/static periods. Any hashing error
-    falls back to OCR (fail-safe: never skip a real change)."""
+    """The live sensor. With ``dedup=True`` it does a pre-OCR image-hash check and
+    skips OCR when the frame is ~unchanged (saves battery during idle) — BUT a coarse
+    perceptual hash sees layout, not text, so it can miss same-layout content changes
+    and freeze memory; hence it is **off by default**. With ``dedup=False`` (default)
+    every frame is OCR'd and change-detection happens on the OCR text downstream —
+    correct, at higher battery cost. Any hashing error falls back to OCR."""
 
-    def __init__(self, languages: tuple[str, ...] = ("en-US",),
-                 similarity_threshold: int = 4) -> None:
+    def __init__(self, languages: tuple[str, ...] = ("en-US",), *,
+                 dedup: bool = False, similarity_threshold: int = 4) -> None:
         self._languages = languages
+        self._dedup = dedup
         self._threshold = similarity_threshold
         self._last_dhash: int | None = None
 
@@ -255,14 +257,16 @@ class ScreenSensor:  # pragma: no cover - native macOS (capture/OCR)
         if image is None:
             return Observation(ts, app_name, bundle_id, "", "", captured=False,
                                skip_reason="capture_blocked_or_no_permission")
-        try:
-            dh = image_dhash(image)
-        except Exception:  # noqa: BLE001 - hashing must never break capture
-            dh = None
-        if (dh is not None and self._last_dhash is not None
-                and images_similar(dh, self._last_dhash, self._threshold)):
-            return Observation(ts, app_name, bundle_id, "", "", captured=True,
-                               skip_reason="unchanged", content_hash=hex(dh))
+        dh = None
+        if self._dedup:
+            try:
+                dh = image_dhash(image)
+            except Exception:  # noqa: BLE001 - hashing must never break capture
+                dh = None
+            if (dh is not None and self._last_dhash is not None
+                    and images_similar(dh, self._last_dhash, self._threshold)):
+                return Observation(ts, app_name, bundle_id, "", "", captured=True,
+                                   skip_reason="unchanged", content_hash=hex(dh))
         try:
             text = ocr_image(image, self._languages)
         except Exception as exc:  # noqa: BLE001 - OCR failure is non-fatal
