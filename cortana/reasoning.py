@@ -65,11 +65,16 @@ def reason(question: str, memory: Memory, backend: LLMBackend, *,
     """Retrieve relevant memories, reason over them with the LLM, return a grounded
     Answer. Retrieval is hybrid (keyword + semantic) when an ``embedder`` is given,
     else full-text on the question's content words; narrowed by any time/app filters."""
-    if embedder is not None:
+    fts = question_to_fts(question)
+    if embedder is not None and fts:
+        # has content terms -> semantic hybrid over the raw question
         memories = memory.recall(query=question, since=since, until=until,
                                  app=app, limit=limit, embedder=embedder)
     else:
-        memories = memory.recall(query=question_to_fts(question),
-                                 since=since, until=until, app=app, limit=limit)
+        # vague / present-tense ("what am I doing") -> most recent activity, not a
+        # relevance ranking that could surface stale-but-similar memories. `fts` is
+        # None for all-stopword questions, so recall falls back to recency.
+        memories = memory.recall(query=fts, since=since, until=until,
+                                 app=app, limit=limit)
     text = backend.generate(build_answer_prompt(question, memories)).strip()
     return Answer(text=text, citations=memories)

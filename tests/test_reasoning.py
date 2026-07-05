@@ -47,6 +47,16 @@ def test_question_to_fts_none_when_only_stopwords():
     assert question_to_fts("what was i doing?") is None
 
 
+def test_present_tense_question_returns_recent_not_relevance(tmp_path):
+    # "what am I doing" is all stop-words -> even with an embedder, use recency, not a
+    # relevance ranking that could surface a stale-but-similar memory.
+    from cortana.embeddings import FakeEmbedder
+    mem = _seed(tmp_path)   # budget @09:00, email @12:00 (email is most recent)
+    ans = reason("what am I doing", mem, CapturingBackend(), embedder=FakeEmbedder())
+    assert ans.citations and ans.citations[0]["app_name"] == "Mail"   # most recent
+    mem.close()
+
+
 # --- reason() --------------------------------------------------------------- #
 
 def test_reason_retrieves_only_relevant_memories_as_citations(tmp_path):
