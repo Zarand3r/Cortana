@@ -241,7 +241,7 @@ memory; and **LongMemEval** is the standard yardstick for long-horizon recall
 | Temporal facts with supersede/invalidation (Zep) | ❌ flat timeline | medium | P2 |
 | Self-editing / agentic memory (MemGPT, A-MEM) | ❌ | low (heavier) | P2 |
 | Procedural memory | ❌ | low | P3 |
-| **Eval harness (LongMemEval-style)** | ❌ | measure before optimizing | **P1** |
+| **Eval harness (LongMemEval-style)** | ✅ `benchmarks/retrieval_eval.py` (hit@k, CI-gated) | expand dataset + real-embedder run | done (P1) |
 
 ---
 
@@ -255,9 +255,11 @@ memory; and **LongMemEval** is the standard yardstick for long-horizon recall
    never loses rows (write) and falls back to keyword (read). *Remaining:* a
    cross-encoder **rerank** stage (P2) and a batched/`sqlite-vec` index if the linear
    scan ever gets slow.
-2. **A local eval harness (P1).** A small LongMemEval-style set of
-   question→expected-memory pairs over a seeded DB, wired into `ci/`. Measure recall
-   *before* optimizing retrieval so §10.1 is data-driven, not vibes.
+2. ~~**A local eval harness (P1).**~~ **DONE.** `benchmarks/retrieval_eval.py` scores
+   **hit@k** over a seeded question→expected-memory dataset (hermetic with
+   FakeEmbedder, or point it at a real embedder); a CI test gates against a baseline
+   so retrieval regressions fail the build. *Remaining:* grow the dataset and record a
+   real-embedder number.
 3. ~~**Reflection / consolidation (P1).**~~ **DONE.** `cortana/consolidation.py`
    `consolidate()` summarizes recent episodes into a durable **reflection** stored in
    a `reflections` table (schema v4), exposed as `cortana digest`. *Remaining:*
