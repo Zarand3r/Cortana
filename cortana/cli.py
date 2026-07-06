@@ -61,6 +61,12 @@ def _parser() -> argparse.ArgumentParser:
     _add_common(rec_p)
     rec_p.add_argument("--limit", type=int, default=12, help="recent memories to consider")
 
+    dig_p = sub.add_parser("digest", help="consolidate recent activity into a reflection")
+    _add_common(dig_p)
+    dig_p.add_argument("--since", help="ISO timestamp lower bound")
+    dig_p.add_argument("--until", help="ISO timestamp upper bound")
+    dig_p.add_argument("--limit", type=int, default=200, help="max episodes to consolidate")
+
     chat_p = sub.add_parser("chat", help="serve a local ChatGPT-style web UI")
     _add_common(chat_p)
     chat_p.add_argument("--port", type=int, help="port for the web UI (default 8808)")
@@ -168,6 +174,24 @@ def cmd_recommend(args) -> int:
     return 0
 
 
+def cmd_digest(args) -> int:
+    from cortana.consolidation import consolidate
+    cfg = _config_from_args(args)
+    backend = make_backend(cfg.backend, cfg)
+    memory = open_memory(cfg)
+    try:
+        ref = consolidate(memory, backend, since=args.since, until=args.until,
+                          limit=args.limit)
+    finally:
+        memory.close()
+    if ref.basis_count == 0:
+        print("Nothing to consolidate yet.")
+    else:
+        print(ref.text)
+        print(f"\n({ref.basis_count} episodes, {ref.period_start} … {ref.period_end})")
+    return 0
+
+
 def cmd_chat(cfg: Config) -> int:  # pragma: no cover - binds a real socket
     from cortana.chatapp import serve
 
@@ -195,6 +219,8 @@ def main(argv=None) -> int:
         return cmd_ask(args)
     if command == "recommend":
         return cmd_recommend(args)
+    if command == "digest":
+        return cmd_digest(args)
     if command == "chat":
         return cmd_chat(_config_from_args(args))
     if command == "desktop":  # pragma: no cover - native menu-bar app

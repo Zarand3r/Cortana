@@ -235,7 +235,7 @@ memory; and **LongMemEval** is the standard yardstick for long-horizon recall
 | On-device privacy + redaction | ✅ (differentiator) | — | — |
 | **Semantic / vector retrieval** | ✅ local embeddings (opt-in `embed=true`) | rerank stage still absent | done (P0) |
 | **Hybrid retrieval (BM25 + dense + RRF)** | ✅ FTS + embedding cosine fused by RRF; cross-encoder rerank not yet | rerank = P2 | done (P0) |
-| **Reflection / consolidation** (episodes → durable insights) | ❌ per-batch summaries only | high | **P1** |
+| **Reflection / consolidation** (episodes → durable insights) | ✅ `consolidate()` → `reflections` (`cortana digest`) | auto-schedule pending | done (P1) |
 | Importance scoring + recency-decay ranking (Generative Agents) | ❌ newest-first only | medium | **P1** |
 | **Explicit "saved" facts vs derived** (ChatGPT) + user profile | ❌ no user-facts/profile layer | medium | **P1** |
 | Temporal facts with supersede/invalidation (Zep) | ❌ flat timeline | medium | P2 |
@@ -258,11 +258,11 @@ memory; and **LongMemEval** is the standard yardstick for long-horizon recall
 2. **A local eval harness (P1).** A small LongMemEval-style set of
    question→expected-memory pairs over a seeded DB, wired into `ci/`. Measure recall
    *before* optimizing retrieval so §10.1 is data-driven, not vibes.
-3. **Reflection / consolidation (P1).** A periodic pass (daily, or on session
-   boundary) that summarizes recent episodes/summaries into higher-level **daily
-   digests** and a durable **semantic profile** ("works on Cortana in the mornings").
-   Store as first-class semantic rows; include them in retrieval. This is what turns a
-   log into knowledge.
+3. ~~**Reflection / consolidation (P1).**~~ **DONE.** `cortana/consolidation.py`
+   `consolidate()` summarizes recent episodes into a durable **reflection** stored in
+   a `reflections` table (schema v4), exposed as `cortana digest`. *Remaining:*
+   auto-schedule it (daily via launchd/cron), and include reflections in retrieval so
+   "what have I been working on lately" surfaces the digest.
 4. **Recency × importance × relevance ranking (P1).** Score `recall` results by a
    weighted blend instead of pure recency: add an LLM/heuristic **importance** field on
    episodes and an exponential **recency decay**, combined with the §10.1 relevance

@@ -18,7 +18,7 @@ from pathlib import Path
 from cortana.embeddings import cosine, reciprocal_rank_fusion
 from cortana.perception import Observation, Semantic
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 # Fresh-DB schema (normalized — no `summary` text column on `context`).
 _FRESH_SCHEMA = """
@@ -72,6 +72,18 @@ CREATE TABLE embeddings (
 );
 """
 
+# Reflections (v4): durable higher-level insights consolidated from many episodes
+# (generative-agents style) — semantic memory that outlives the raw episodes.
+_REFLECTIONS_SCHEMA = """
+CREATE TABLE reflections (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    period_start TEXT NOT NULL,
+    period_end   TEXT NOT NULL,
+    text         TEXT NOT NULL,
+    created_at   TEXT NOT NULL
+);
+"""
+
 GIB = 1024 ** 3
 
 
@@ -119,11 +131,14 @@ class Memory:
             self._conn.executescript(_FRESH_SCHEMA)
             self._conn.executescript(_FTS_SCHEMA)
             self._conn.executescript(_EMBEDDINGS_SCHEMA)
+            self._conn.executescript(_REFLECTIONS_SCHEMA)
         else:
             if not self._table_exists("summaries"):        # legacy v0 -> v2 structures
                 self._upgrade_legacy()
             if not self._table_exists("embeddings"):        # v2 -> v3 semantic index
                 self._conn.executescript(_EMBEDDINGS_SCHEMA)
+            if not self._table_exists("reflections"):       # v3 -> v4 consolidation
+                self._conn.executescript(_REFLECTIONS_SCHEMA)
         self._conn.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
         self._conn.commit()
 
@@ -376,6 +391,22 @@ class Memory:
         by_id = {row[0]: row for row in self._conn.execute(sql, ids)}   # row[0] = c.id
         out_cols = (*self._COLS, "summary")
         return [dict(zip(out_cols, by_id[i])) for i in ids if i in by_id]
+
+    # --- reflections (consolidated semantic memory) ------------------------ #
+    def add_reflection(self, period_start: str, period_end: str, text: str) -> int:
+        with self._conn:
+            cur = self._conn.execute(
+                "INSERT INTO reflections (period_start, period_end, text, created_at) "
+                "VALUES (?, ?, ?, ?)", (period_start, period_end, text, _now()))
+        return cur.lastrowid
+
+    def recent_reflections(self, limit: int = 10) -> list[dict]:
+        cols = ("id", "period_start", "period_end", "text", "created_at")
+        with self._lock:
+            rows = list(self._conn.execute(
+                f"SELECT {', '.join(cols)} FROM reflections "
+                "ORDER BY created_at DESC LIMIT ?", (max(1, limit),)))
+        return [dict(zip(cols, r)) for r in rows]
 
     # --- introspection ----------------------------------------------------- #
     def counts(self) -> dict[str, int]:

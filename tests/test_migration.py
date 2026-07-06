@@ -47,11 +47,11 @@ def test_legacy_migration(tmp_path):
     mem = Memory(db)   # opening triggers migration
 
     # upgraded version (v0 -> current)
-    assert mem._conn.execute("PRAGMA user_version").fetchone()[0] == 3
-    # new structures exist (v2 summaries/FTS + v3 embeddings)
+    assert mem._conn.execute("PRAGMA user_version").fetchone()[0] == 4
+    # new structures exist (v2 summaries/FTS + v3 embeddings + v4 reflections)
     tables = {r[0] for r in mem._conn.execute(
         "SELECT name FROM sqlite_master WHERE type IN ('table','view')")}
-    assert {"summaries", "context_fts", "embeddings"} <= tables
+    assert {"summaries", "context_fts", "embeddings", "reflections"} <= tables
     # new columns added; legacy `summary` column retained (read-only)
     cols = {r[1] for r in mem._conn.execute("PRAGMA table_info(context)")}
     assert {"summary_id", "content_hash", "summary"} <= cols
@@ -70,6 +70,6 @@ def test_migration_is_idempotent(tmp_path):
     _seed_legacy(db)
     Memory(db).close()        # migrate once
     mem = Memory(db)          # open again — must not re-migrate or error
-    assert mem._conn.execute("PRAGMA user_version").fetchone()[0] == 3
+    assert mem._conn.execute("PRAGMA user_version").fetchone()[0] == 4
     assert mem.counts()["context"] == 2
     mem.close()
