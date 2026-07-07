@@ -306,9 +306,11 @@ def test_slow_llm_does_not_stall_capture(make_memory):
     mem, be = make_memory(), SlowBackend(0.02)
     _run(AgentLoop(_cfg(batch_size=1, queue_max=256), mem, be, sensor), max_ticks=8)
 
-    # big queue absorbed the burst; the slow consumer caught up during drain.
+    # big queue absorbed the burst; the slow consumer caught up during drain —
+    # and the adaptive batch drain absorbed the backlog into FEWER LLM calls
+    # (that's the capacity fix: batch size adapts to backlog).
     assert mem.counts()["context"] == 8                    # all captures recorded
-    assert be.calls == 8
+    assert 1 <= be.calls < 8                               # batched, not per-event
 
 
 # --- P12: graceful drain on stop -------------------------------------------- #

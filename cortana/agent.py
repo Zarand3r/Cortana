@@ -90,10 +90,11 @@ class AgentLoop:
         self._memory = memory
         self._backend = backend
         self._embedder = embedder     # when set, store semantic vectors on write
-        # sensor: (ts) -> Observation | None. Default = the live native sensor;
-        # image dedup is opt-in (off by default so content changes are never missed).
-        # Tests inject a fake so the loop runs without PyObjC.
-        self._sensor = sensor or ScreenSensor(config.ocr_languages, dedup=config.image_dedup)
+        # sensor: (ts) -> Observation | None. Default = the live native sensor with
+        # exact-hash image dedup (safe: any change still OCRs) and the privacy
+        # exclusion list enforced. Tests inject a fake so the loop runs without PyObjC.
+        self._sensor = sensor or ScreenSensor(config.ocr_languages, dedup=config.image_dedup,
+                                              excluded_bundles=config.excluded_bundles)
         self.metrics = Metrics()
         # Short-term memory: recent changed observations, live in RAM. Shared with
         # readers (chat/recommend) when injected; otherwise loop-local.
@@ -202,9 +203,13 @@ class AgentLoop:
             semantic: Semantic | None = None
             if any(o.captured and o.ocr_text for o in batch):
                 started = loop.time()
+                # keep the total prompt budget ~constant when a drained backlog makes
+                # the batch large: shrink the per-event OCR cap proportionally.
+                per_event = max(600, self._cfg.ocr_max_chars * self._cfg.batch_size
+                                // max(1, len(batch)))
                 try:
                     semantic = await loop.run_in_executor(
-                        llm_pool, extract_meaning, batch, self._backend, self._cfg.ocr_max_chars)
+                        llm_pool, extract_meaning, batch, self._backend, per_event)
                     self.metrics.record_llm(loop.time() - started)
                     self.metrics.summarized += len(batch)
                 except Exception as exc:  # noqa: BLE001 - backend down/slow/bad response
@@ -225,7 +230,10 @@ class AgentLoop:
 
     async def _collect_batch(self, queue, stop, loop):
         """Gather up to batch_size observations, or whatever arrives within
-        batch_window — draining promptly once stop is set."""
+        batch_window — draining promptly once stop is set. If a backlog has built up
+        (captures outpacing the LLM), drain immediately-available items up to
+        4×batch_size so one summarization call absorbs the backlog instead of the
+        queue growing until backpressure drops events."""
         batch: list[Observation] = []
         deadline = loop.time() + self._cfg.batch_window
         while len(batch) < self._cfg.batch_size:
@@ -237,6 +245,12 @@ class AgentLoop:
             try:
                 batch.append(await asyncio.wait_for(queue.get(), timeout=timeout))
             except asyncio.TimeoutError:
+                break
+        # adaptive drain: absorb any backlog that piled up while we waited/summarized
+        while len(batch) < self._cfg.batch_size * 4:
+            try:
+                batch.append(queue.get_nowait())
+            except asyncio.QueueEmpty:
                 break
         return batch
 

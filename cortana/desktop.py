@@ -132,17 +132,21 @@ class _TrackingService:  # pragma: no cover - threads + asyncio + native sensor
             self._loop.call_soon_threadsafe(self._cancel)
         if self._thread:
             self._thread.join(timeout=self._cfg.batch_window + 30)
+        if self._working is not None:
+            self._working.clear()     # stale session data must not be served as "now"
 
 
-def _serve_chat_background(cfg, backend, memory) -> None:  # pragma: no cover - native socket + thread
+def _serve_chat_background(cfg, backend, memory,
+                           working_memory=None) -> None:  # pragma: no cover - native socket + thread
     """Run the memory-backed chat server in a daemon thread so the menu-bar app
-    stays responsive."""
+    stays responsive. ``working_memory`` gives chat the live 'right now' view."""
     import threading
 
     from cortana.chatapp import serve
     threading.Thread(
         target=lambda: serve(backend, host=cfg.chat_host, port=cfg.chat_port,
-                             system_prompt=cfg.chat_system_prompt, memory=memory),
+                             system_prompt=cfg.chat_system_prompt, memory=memory,
+                             working_memory=working_memory),
         name="cortana-chat", daemon=True,
     ).start()
 
@@ -196,20 +200,23 @@ def run_app(cfg) -> int:  # pragma: no cover - native menu-bar app (rumps)
 
     from cortana.working_memory import WorkingMemory
 
+    import threading
+
     backend = make_backend(cfg.backend, cfg)
     read_memory = open_memory(cfg, check_same_thread=False)   # shared read-only recall
     working = WorkingMemory(maxlen=cfg.working_memory_max)    # short-term, shared in-process
-    _serve_chat_background(cfg, backend, read_memory)
+    _serve_chat_background(cfg, backend, read_memory, working)  # chat sees the live view
     service = _TrackingService(cfg, working_memory=working)   # the tracker fills it
     url = f"http://{cfg.chat_host}:{cfg.chat_port}"
     chat_window = ChatWindowManager(lambda: _spawn_chat_window(url))
 
     def _show_recommendation() -> None:
-        # rumps.alert is a modal dialog that works when run from source; notifications
-        # silently no-op unless the app is a bundled/signed .app. Recommendation is
-        # grounded in short-term working memory (current activity) first.
-        rumps.alert(title="Cortana — Recommendation",
-                    message=recommendation_message(read_memory, backend, working))
+        # The LLM call is multi-second: run it on a worker thread so the menu bar
+        # doesn't beachball, and show the alert from the follow-up.
+        def work():
+            msg = recommendation_message(read_memory, backend, working)
+            rumps.alert(title="Cortana — Recommendation", message=msg)
+        threading.Thread(target=work, name="cortana-recommend", daemon=True).start()
 
     controller = DesktopController(
         start_tracking=service.start,
@@ -220,13 +227,15 @@ def run_app(cfg) -> int:  # pragma: no cover - native menu-bar app (rumps)
 
     class CortanaApp(rumps.App):
         def __init__(self):
-            super().__init__("Cortana", quit_button="Quit Cortana")
+            super().__init__("Cortana", quit_button=None)   # own quit for a clean drain
             self.track_item = rumps.MenuItem(controller.tracking_label(),
                                              callback=self._toggle)
             self.menu = [
                 self.track_item,
                 rumps.MenuItem("Open Chat…", callback=self._chat),
                 rumps.MenuItem("Get Recommendation", callback=self._recommend),
+                None,
+                rumps.MenuItem("Quit Cortana", callback=self._quit),
             ]
 
         def _toggle(self, _):
@@ -238,6 +247,13 @@ def run_app(cfg) -> int:  # pragma: no cover - native menu-bar app (rumps)
 
         def _recommend(self, _):
             controller.recommend()
+
+        def _quit(self, _):
+            # Clean shutdown: stop tracking (drains the queue, closes the writer),
+            # close the read connection, then exit — no observations lost mid-batch.
+            controller.stop()
+            read_memory.close()
+            rumps.quit_application()
 
     CortanaApp().run()
     return 0

@@ -50,7 +50,18 @@ def consolidate(memory: Memory, backend: LLMBackend, *, since: str | None = None
     # recall is newest-first, so period spans oldest..newest of the window
     period_start = memories[-1]["ts"]
     period_end = memories[0]["ts"]
-    text = backend.generate(build_digest_prompt(memories)).strip()
+    # feed the LLM a chronological log, and don't repeat a batch summary for every
+    # event in the batch — one entry per distinct summary (or raw OCR row).
+    seen_summaries: set[int] = set()
+    log_rows = []
+    for m in reversed(memories):                      # oldest -> newest
+        sid = m.get("summary_id")
+        if sid is not None and m.get("summary"):
+            if sid in seen_summaries:
+                continue
+            seen_summaries.add(sid)
+        log_rows.append(m)
+    text = backend.generate(build_digest_prompt(log_rows)).strip()
     memory.add_reflection(period_start, period_end, text)
     return Reflection(text=text, period_start=period_start, period_end=period_end,
                       basis_count=len(memories))

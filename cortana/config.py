@@ -43,7 +43,6 @@ class Config:
     interval: float = 1.0                         # seconds between captures
     ocr_languages: tuple[str, ...] = ("en-US",)
     ocr_max_chars: int = 6000                     # truncate OCR before store AND prompt
-    read_focused_text: bool = False               # opt-in Accessibility text grab
     image_dedup: bool = True                      # skip OCR on byte-identical frames (battery);
                                                   # exact hash, safe — any change still OCRs
 
@@ -90,7 +89,6 @@ class Config:
         ("perception", "interval"): ("interval", float),
         ("perception", "ocr_languages"): ("ocr_languages", _as_tuple),
         ("perception", "ocr_max_chars"): ("ocr_max_chars", int),
-        ("perception", "read_focused_text"): ("read_focused_text", _as_bool),
         ("perception", "image_dedup"): ("image_dedup", _as_bool),
         ("llm", "backend"): ("backend", str),
         ("llm", "model"): ("model", str),

@@ -22,6 +22,7 @@ from importlib.resources import files
 
 from cortana.backends import LLMBackend, Message, Role
 from cortana.memory import Memory
+from cortana.reasoning import question_to_fts
 
 
 class Conversation:
@@ -48,7 +49,7 @@ class Conversation:
     def clear(self) -> None:
         with self._lock:
             self._msgs = []
-from cortana.reasoning import question_to_fts
+
 
 _CONTEXT_PER_MEMORY_CHARS = 400   # cap each memory in the context block
 
@@ -80,6 +81,18 @@ def retrieve_context(memory: Memory, query: str, *, limit: int = 8) -> list[dict
 
 
 _CONTEXT_HEADER = "--- CONTEXT: THE USER'S RECENT SCREEN ACTIVITY ---"
+
+
+def format_live_block(observations) -> str:
+    """Render working-memory observations (the LIVE 'right now' view — fresher than
+    the DB, which lags by batch/LLM latency) into a context block, or ''."""
+    if not observations:
+        return ""
+    lines = ["--- LIVE: WHAT IS ON THE USER'S SCREEN RIGHT NOW (freshest first) ---"]
+    for o in reversed(list(observations)):        # newest first
+        body = (o.ocr_text or "").strip().replace("\n", " ")
+        lines.append(f"[{o.ts}] app={o.app_name!r}: {body[:_CONTEXT_PER_MEMORY_CHARS]}")
+    return "\n".join(lines)
 
 
 def format_context_block(memories: list[dict]) -> str:
@@ -172,7 +185,8 @@ class Response:
 def route(method: str, path: str, body: bytes, backend: LLMBackend,
           *, system_prompt: str, index_html: str,
           memory: Memory | None = None, context_limit: int = 8,
-          conversation: "Conversation | None" = None) -> Response:
+          conversation: "Conversation | None" = None,
+          working_memory=None) -> Response:
     """Map a request to a Response. Pure: no sockets, no globals — the whole
     server contract lives here so it can be tested directly. ``memory`` grounds
     replies in recent screen activity; ``conversation`` (when given) persists the
@@ -189,11 +203,15 @@ def route(method: str, path: str, body: bytes, backend: LLMBackend,
         except ValueError as exc:
             payload = json.dumps({"error": str(exc)}).encode("utf-8")
             return Response(400, "application/json", [payload])
-        context_block = ""
+        blocks = []
+        if working_memory is not None and len(working_memory):
+            # live view first: fresher than the DB (which lags by batch/LLM latency)
+            blocks.append(format_live_block(working_memory.recent(limit=context_limit)))
         if memory is not None:
             memories = retrieve_context(memory, latest_user_text(history),
                                         limit=context_limit)
-            context_block = format_context_block(memories)
+            blocks.append(format_context_block(memories))
+        context_block = "\n\n".join(b for b in blocks if b)
         messages = build_messages(history, system_prompt, context_block)
         stream = backend.chat(messages)
         if conversation is not None:
@@ -212,13 +230,15 @@ class ChatHandler(BaseHTTPRequestHandler):  # pragma: no cover - native socket I
     index_html: str
     memory: Memory | None = None
     conversation: "Conversation | None" = None
+    working_memory = None
 
     def _dispatch(self, method: str) -> None:
         length = int(self.headers.get("Content-Length") or 0)
         body = self.rfile.read(length) if length else b""
         resp = route(method, self.path, body, self.backend,
                      system_prompt=self.system_prompt, index_html=self.index_html,
-                     memory=self.memory, conversation=self.conversation)
+                     memory=self.memory, conversation=self.conversation,
+                     working_memory=self.working_memory)
         self.send_response(resp.status)
         self.send_header("Content-Type", resp.content_type)
         if resp.content_type == "text/event-stream":
@@ -243,7 +263,8 @@ class ChatHandler(BaseHTTPRequestHandler):  # pragma: no cover - native socket I
 
 def make_handler(backend: LLMBackend, *, system_prompt: str, index_html: str,
                  memory: Memory | None = None,
-                 conversation: "Conversation | None" = None) -> type[ChatHandler]:
+                 conversation: "Conversation | None" = None,
+                 working_memory=None) -> type[ChatHandler]:
     """Build a ChatHandler subclass bound to this backend/config (the stdlib
     server instantiates the class per request, so config rides on the type)."""
 
@@ -255,17 +276,21 @@ def make_handler(backend: LLMBackend, *, system_prompt: str, index_html: str,
     _Bound.index_html = index_html
     _Bound.memory = memory
     _Bound.conversation = conversation
+    _Bound.working_memory = working_memory
     return _Bound
 
 
 def serve(backend: LLMBackend, *, host: str = "127.0.0.1", port: int = 8808,
           system_prompt: str, memory: Memory | None = None,
-          conversation: "Conversation | None" = None) -> None:  # pragma: no cover - binds a real socket
-    """Run the chat web server until interrupted. ``memory`` grounds replies in recent
-    screen activity; ``conversation`` persists the chat until the process exits."""
+          conversation: "Conversation | None" = None,
+          working_memory=None) -> None:  # pragma: no cover - binds a real socket
+    """Run the chat web server until interrupted. ``memory`` grounds replies in
+    recent screen activity, ``working_memory`` in the live 'right now' view;
+    ``conversation`` persists the chat until the process exits."""
     handler = make_handler(backend, system_prompt=system_prompt,
                            index_html=load_index(), memory=memory,
-                           conversation=conversation or Conversation())
+                           conversation=conversation or Conversation(),
+                           working_memory=working_memory)
     server = ThreadingHTTPServer((host, port), handler)
     try:
         server.serve_forever()

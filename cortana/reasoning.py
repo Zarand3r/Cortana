@@ -52,9 +52,16 @@ def question_to_fts(question: str) -> str | None:
     return " OR ".join(terms) or None
 
 
-def build_answer_prompt(question: str, memories: list[dict]) -> str:
-    """Assemble the retrieved memories + question into a single answering prompt."""
-    parts = [ANSWER_SYSTEM_PROMPT, "\n--- RETRIEVED MEMORIES ---"]
+def build_answer_prompt(question: str, memories: list[dict],
+                        reflections: list[dict] | None = None) -> str:
+    """Assemble retrieved memories (+ any consolidated reflections) and the question
+    into a single answering prompt."""
+    parts = [ANSWER_SYSTEM_PROMPT]
+    if reflections:
+        parts.append("\n--- REFLECTIONS (consolidated summaries of past periods) ---")
+        for r in reflections:
+            parts.append(f"[{r['period_start']} … {r['period_end']}] {r['text']}")
+    parts.append("\n--- RETRIEVED MEMORIES ---")
     if not memories:
         parts.append("(none)")
     for m in memories:
@@ -81,5 +88,7 @@ def reason(question: str, memory: Memory, backend: LLMBackend, *,
         # None for all-stopword questions, so recall falls back to recency.
         memories = memory.recall(query=fts, since=since, until=until,
                                  app=app, limit=limit)
-    text = backend.generate(build_answer_prompt(question, memories)).strip()
+    reflections = memory.recent_reflections(limit=3)   # consolidated knowledge, if any
+    text = backend.generate(
+        build_answer_prompt(question, memories, reflections)).strip()
     return Answer(text=text, citations=memories)

@@ -225,13 +225,18 @@ class ScreenSensor:  # pragma: no cover - native macOS (capture/OCR)
     ``dedup=False`` every frame is OCR'd. Any hashing error falls back to OCR."""
 
     def __init__(self, languages: tuple[str, ...] = ("en-US",), *,
-                 dedup: bool = True) -> None:
+                 dedup: bool = True,
+                 excluded_bundles: frozenset[str] = frozenset()) -> None:
         self._languages = languages
         self._dedup = dedup
+        self._excluded = excluded_bundles
         self._last_hash: str | None = None
 
     def __call__(self, ts: str) -> Observation:
         app_name, bundle_id, _pid = frontmost_app()
+        if bundle_id in self._excluded:      # privacy: never capture excluded apps
+            return Observation(ts, app_name, bundle_id, "", "", captured=False,
+                               skip_reason="excluded_app")
         image = capture_screen()
         if image is None:
             return Observation(ts, app_name, bundle_id, "", "", captured=False,

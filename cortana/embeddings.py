@@ -21,7 +21,12 @@ from abc import ABC, abstractmethod
 
 
 def cosine(a: list[float], b: list[float]) -> float:
-    """Cosine similarity in [-1, 1]; 0.0 for a zero vector (no NaN)."""
+    """Cosine similarity in [-1, 1]; 0.0 for a zero vector (no NaN). Raises on
+    dimension mismatch — zip() would silently truncate and compare incompatible
+    embedding spaces (e.g. after switching embed_model)."""
+    if len(a) != len(b):
+        raise ValueError(f"embedding dimension mismatch: {len(a)} vs {len(b)} "
+                         "(did embed_model change? re-index or clear embeddings)")
     dot = sum(x * y for x, y in zip(a, b))
     na = math.sqrt(sum(x * x for x in a))
     nb = math.sqrt(sum(y * y for y in b))

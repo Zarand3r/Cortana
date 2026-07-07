@@ -10,6 +10,7 @@ Pure stdlib (sqlite3) — imports with no native deps (P7).
 from __future__ import annotations
 
 import json
+import logging
 import sqlite3
 import threading
 from datetime import datetime, timedelta, timezone
@@ -17,6 +18,8 @@ from pathlib import Path
 
 from cortana.embeddings import cosine, reciprocal_rank_fusion
 from cortana.perception import Observation, Semantic
+
+log = logging.getLogger("cortana.memory")
 
 SCHEMA_VERSION = 4
 
@@ -107,6 +110,7 @@ class Memory:
         self._conn = sqlite3.connect(self.path, check_same_thread=check_same_thread)
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA foreign_keys=ON")
+        self._conn.execute("PRAGMA busy_timeout=5000")   # cross-process writers wait, not SQLITE_BUSY
         # Serializes reads issued from the chat server's per-request threads, which
         # share one connection (check_same_thread=False disables the check but does
         # NOT make concurrent use of one sqlite3 connection safe).
@@ -135,6 +139,9 @@ class Memory:
         else:
             if not self._table_exists("summaries"):        # legacy v0 -> v2 structures
                 self._upgrade_legacy()
+            if not self._table_exists("context_fts"):       # crash-recovery: a partial
+                self._conn.executescript(_FTS_SCHEMA)       # fresh-create must still get FTS
+                self._conn.execute("INSERT INTO context_fts(context_fts) VALUES('rebuild')")
             if not self._table_exists("embeddings"):        # v2 -> v3 semantic index
                 self._conn.executescript(_EMBEDDINGS_SCHEMA)
             if not self._table_exists("reflections"):       # v3 -> v4 consolidation
@@ -187,6 +194,18 @@ class Memory:
         ``embedder`` is given, store a semantic vector for each event's OCR text.
         Returns the summary_id (or None when there was no semantic record)."""
         summary_id = None
+        # Embed BEFORE opening the transaction — a slow/hung embedder (network call)
+        # must not hold the write txn open (it would block the single db thread and
+        # stall backpressure persistence / shutdown). Best-effort: a failed embed
+        # never loses the row (keyword search still works).
+        vecs: dict[int, list[float]] = {}
+        if embedder is not None:
+            for i, obs in enumerate(observations):
+                if obs.ocr_text:
+                    try:
+                        vecs[i] = embedder.embed(obs.ocr_text)
+                    except Exception as exc:  # noqa: BLE001
+                        log.warning("embedding failed (storing row without vector): %s", exc)
         # `with self._conn` is one atomic transaction: on any failure the summary and
         # its events roll back together — never a summary orphaned from its events.
         with self._conn:
@@ -199,16 +218,12 @@ class Memory:
                      semantic.summary, semantic.model, _now()),
                 )
                 summary_id = cur.lastrowid
-            for obs in observations:
+            for i, obs in enumerate(observations):
                 cid = self._insert_event(obs, summary_id=summary_id)
-                if embedder is not None and obs.ocr_text:
-                    try:
-                        vec = embedder.embed(obs.ocr_text)
-                    except Exception:  # noqa: BLE001 - embedding is best-effort; a missing
-                        continue        # model must never lose the row (keyword search still works)
+                if i in vecs:
                     self._conn.execute(
                         "INSERT OR REPLACE INTO embeddings(context_id, vec) VALUES (?, ?)",
-                        (cid, json.dumps(vec)))
+                        (cid, json.dumps(vecs[i])))
         return summary_id
 
     def remember_dropped(self, observation: Observation) -> None:
@@ -262,6 +277,8 @@ class Memory:
         removed = self._delete_older_than(cutoff)
         removed += self._evict_to_size_cap()
         self._prune_orphan_summaries()
+        # reflections are bounded by the same age policy (every tier has a cap)
+        self._conn.execute("DELETE FROM reflections WHERE created_at < ?", (cutoff,))
         self._conn.commit()
         return removed
 
@@ -299,11 +316,14 @@ class Memory:
         ``summary`` (NULL for dropped rows)."""
         if embedder is not None and query:
             try:
+                # Embed BEFORE taking the lock — a slow/hung embedder (30s HTTP call)
+                # must not block every other reader.
+                qvec = embedder.embed(query)
                 with self._lock:
-                    ids = self._hybrid_ids(query, embedder, since, until, app, max(1, limit))
+                    ids = self._hybrid_ids(query, qvec, since, until, app, max(1, limit))
                     return self._rows_by_ids(ids)
-            except Exception:  # noqa: BLE001 - embedder down -> fall back to keyword search
-                pass
+            except Exception as exc:  # noqa: BLE001 - embedder down -> keyword fallback
+                log.warning("hybrid recall failed (%s); falling back to keyword", exc)
         cols = ", ".join(f"c.{c}" for c in self._COLS) + ", s.summary"
         join = " LEFT JOIN summaries s ON s.id = c.summary_id"
         params: list = []
@@ -356,9 +376,9 @@ class Memory:
             where.append("c.app_name = ?"); params.append(app)
         return " AND ".join(where), params
 
-    def _hybrid_ids(self, query, embedder, since, until, app, limit) -> list[int]:
-        """Fuse FTS keyword ranking with embedding-cosine ranking via RRF. Caller
-        holds the lock."""
+    def _hybrid_ids(self, query, qvec, since, until, app, limit) -> list[int]:
+        """Fuse FTS keyword ranking with embedding-cosine ranking (against the
+        pre-computed query vector ``qvec``) via RRF. Caller holds the lock."""
         filt, fparams = self._filter_clauses(since, until, app)
         candidate_k = max(limit * 5, 50)          # deeper candidate pools -> better fusion
         # keyword ids, ranked by FTS5 relevance (rank), crash-proof on raw input
@@ -371,7 +391,6 @@ class Memory:
             kw = [r[0] for r in self._conn.execute(kw_sql, [phrase, *fparams, candidate_k])]
         # semantic ids, ranked by cosine to the query vector (brute-force; bounded by
         # retention — fine at this scale)
-        qvec = embedder.embed(query)
         sem_rows = self._conn.execute(
             f"SELECT e.context_id, e.vec FROM embeddings e "
             f"JOIN context c ON c.id=e.context_id WHERE {filt}", fparams)
