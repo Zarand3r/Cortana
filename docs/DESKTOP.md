@@ -24,15 +24,17 @@ permission boundary.
 
 ```
   Cortana.app  (menu-bar, LSUIElement — no Dock icon)
-   ├─ rumps menu:  ▶/⏸ Start/Stop Tracking · Open Chat… · Get Recommendation · Quit
-   ├─ chat server thread   (chatapp.serve, memory-backed)  ──▶ 127.0.0.1:8808
+   ├─ rumps menu:  ▶/⏸ Start/Stop Cortana · Get Recommendation · Quit
+   │      ONE state: Start = tracking ON + chat window OPEN; Stop (or the user
+   │      closing the window — watched by a 2s rumps.Timer) = both OFF. Never mixed.
+   ├─ chat server thread   (chatapp.serve, memory + live working-memory backed)
    ├─ _TrackingService     (AgentLoop on a bg asyncio thread; start/stop = cancel)
-   ├─ "Get Recommendation" ──▶ recommendation_message(memory, backend) → rumps.alert
-   │      (alert, not notification: notifications silently no-op unless bundled/signed)
-   └─ "Open Chat…"         ──▶ ChatWindowManager: one reused pywebview subprocess
+   ├─ "Get Recommendation" ──▶ worker thread computes recommendation_message(...),
+   │      then AppHelper.callAfter → rumps.alert on the MAIN thread (NSAlert
+   │      crashes off-main; alert not notification — notifications no-op unbundled)
+   └─ chat window          ──▶ ChatWindowManager: one reused pywebview subprocess
                                      (`cortana chat-window --url …`) ─▶ 127.0.0.1:8808
-                                     repeated clicks reuse the live window (+ its
-                                     conversation); a new one spawns only if closed
+                                     conversation persists server-side until quit
 ```
 
 - **`DesktopController`** (tested): the start/stop/toggle state machine the menu wires

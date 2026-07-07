@@ -5,13 +5,18 @@ signed ``.app`` bundle, not to a script. Packaging Cortana as a menu-bar app mea
 one bundle owns those grants and runs perception + the chat server + inference
 under a single permission boundary. Design & build/sign notes: docs/DESKTOP.md.
 
+ONE on/off state: "Start Cortana" begins tracking AND opens the chat window;
+"Stop" (or closing the window) stops both — never a mixed state.
+
 Structure (STYLE.md — testable core, thin native shell):
-  * ``DesktopController`` — the pure start/stop/toggle state machine the menu wires
-    to. Fully unit-tested.
+  * ``DesktopController`` — the pure unified state machine (active ⇔ tracking +
+    window; ``sync`` reconciles when the user closes the window). Unit-tested.
   * ``_TrackingService`` — runs the AgentLoop on a background asyncio thread,
     start/stop on demand. Native (threads + PyObjC sensor) -> pragma: no cover.
   * ``run_app`` — builds the rumps menu-bar app + serves chat; opens the chat window
-    (pywebview) in a subprocess. Native -> pragma: no cover.
+    (pywebview) in a subprocess; a 2s rumps.Timer watches for window close. UI calls
+    (rumps.alert) always run on the main thread via AppHelper.callAfter — AppKit
+    crashes off-main. Native -> pragma: no cover.
 """
 
 from __future__ import annotations
@@ -39,46 +44,59 @@ def recommendation_message(memory, backend, working_memory=None) -> str:
 
 
 class DesktopController:
-    """The menu bar's brain: owns whether perception is running and delegates the
-    real work to injected callables (so the state machine is testable without
-    threads, PyObjC, or a GUI)."""
+    """The menu bar's brain — ONE unified on/off state: ``active`` means tracking is
+    running AND the chat window is open. Starting does both; stopping does both;
+    closing the window (detected via ``sync``) stops tracking. No mixed states.
+    Real work is delegated to injected callables so this is testable without
+    threads, PyObjC, or a GUI."""
 
     def __init__(self, *, start_tracking: Callable[[], None],
                  stop_tracking: Callable[[], None],
                  open_chat: Callable[[], None],
-                 show_recommendation: Callable[[], None],
-                 tracking: bool = False) -> None:
+                 close_chat: Callable[[], None],
+                 show_recommendation: Callable[[], None]) -> None:
         self._start_tracking = start_tracking
         self._stop_tracking = stop_tracking
         self._open_chat = open_chat
+        self._close_chat = close_chat
         self._show_recommendation = show_recommendation
-        self.tracking = tracking
+        self.active = False
 
     def start(self) -> None:
-        """Begin perception if not already running (idempotent)."""
-        if not self.tracking:
+        """Activate Cortana: begin perception AND open the chat window (idempotent)."""
+        if not self.active:
             self._start_tracking()
-            self.tracking = True
+            self._open_chat()
+            self.active = True
 
     def stop(self) -> None:
-        """Stop perception if running (idempotent)."""
-        if self.tracking:
+        """Deactivate Cortana: stop perception AND close the chat window (idempotent)."""
+        if self.active:
             self._stop_tracking()
-            self.tracking = False
+            self._close_chat()
+            self.active = False
 
     def toggle(self) -> None:
-        self.stop() if self.tracking else self.start()
+        self.stop() if self.active else self.start()
 
-    def open_chat(self) -> None:
-        self._open_chat()
+    def sync(self, *, window_open: bool) -> bool:
+        """Reconcile with reality: if we're active but the user closed the chat
+        window, stop everything (window closed ⇒ Cortana off). Returns True when
+        the state changed (caller refreshes the menu)."""
+        if self.active and not window_open:
+            self._stop_tracking()
+            self._close_chat()      # idempotent — the window is already gone
+            self.active = False
+            return True
+        return False
 
     def recommend(self) -> None:
         """Surface a proactive recommendation from recent activity."""
         self._show_recommendation()
 
-    def tracking_label(self) -> str:
-        """Menu title reflecting current state."""
-        return "⏸  Stop Tracking" if self.tracking else "▶  Start Tracking"
+    def label(self) -> str:
+        """Menu title reflecting the one state."""
+        return "⏸  Stop Cortana" if self.active else "▶  Start Cortana"
 
 
 class _TrackingService:  # pragma: no cover - threads + asyncio + native sensor
@@ -173,6 +191,13 @@ class ChatWindowManager:
         self._proc = self._spawn()
         return True
 
+    def close(self) -> None:
+        """Close the window if it's open (idempotent — safe on an already-closed or
+        never-opened window)."""
+        if self.is_open():
+            self._proc.terminate()
+        self._proc = None
+
 
 def _spawn_chat_window(url: str):  # pragma: no cover - native webview subprocess
     """Spawn the chat UI as a subprocess so its pywebview run loop doesn't collide
@@ -202,6 +227,8 @@ def run_app(cfg) -> int:  # pragma: no cover - native menu-bar app (rumps)
 
     import threading
 
+    from PyObjCTools import AppHelper
+
     backend = make_backend(cfg.backend, cfg)
     read_memory = open_memory(cfg, check_same_thread=False)   # shared read-only recall
     working = WorkingMemory(maxlen=cfg.working_memory_max)    # short-term, shared in-process
@@ -212,45 +239,52 @@ def run_app(cfg) -> int:  # pragma: no cover - native menu-bar app (rumps)
 
     def _show_recommendation() -> None:
         # The LLM call is multi-second: run it on a worker thread so the menu bar
-        # doesn't beachball, and show the alert from the follow-up.
+        # doesn't beachball — but the ALERT must be shown from the MAIN thread
+        # (AppKit/NSAlert crashes off-main; this was the "Get Recommendation"
+        # exception). AppHelper.callAfter marshals it back onto the Cocoa run loop.
         def work():
             msg = recommendation_message(read_memory, backend, working)
-            rumps.alert(title="Cortana — Recommendation", message=msg)
+            AppHelper.callAfter(
+                lambda: rumps.alert(title="Cortana — Recommendation", message=msg))
         threading.Thread(target=work, name="cortana-recommend", daemon=True).start()
 
     controller = DesktopController(
         start_tracking=service.start,
         stop_tracking=service.stop,
-        open_chat=chat_window.open,          # single reused window, not one-per-click
+        open_chat=chat_window.open,          # single reused window
+        close_chat=chat_window.close,
         show_recommendation=_show_recommendation,
     )
 
     class CortanaApp(rumps.App):
         def __init__(self):
             super().__init__("Cortana", quit_button=None)   # own quit for a clean drain
-            self.track_item = rumps.MenuItem(controller.tracking_label(),
-                                             callback=self._toggle)
+            self.toggle_item = rumps.MenuItem(controller.label(), callback=self._toggle)
             self.menu = [
-                self.track_item,
-                rumps.MenuItem("Open Chat…", callback=self._chat),
+                self.toggle_item,
                 rumps.MenuItem("Get Recommendation", callback=self._recommend),
                 None,
                 rumps.MenuItem("Quit Cortana", callback=self._quit),
             ]
+            # Watch for the user closing the chat window: window closed ⇒ Cortana
+            # off (tracking stops too — never a mixed state).
+            self._watcher = rumps.Timer(self._sync, 2)
+            self._watcher.start()
 
         def _toggle(self, _):
             controller.toggle()
-            self.track_item.title = controller.tracking_label()
+            self.toggle_item.title = controller.label()
 
-        def _chat(self, _):
-            controller.open_chat()
+        def _sync(self, _):
+            if controller.sync(window_open=chat_window.is_open()):
+                self.toggle_item.title = controller.label()
 
         def _recommend(self, _):
             controller.recommend()
 
         def _quit(self, _):
-            # Clean shutdown: stop tracking (drains the queue, closes the writer),
-            # close the read connection, then exit — no observations lost mid-batch.
+            # Clean shutdown: stop tracking (drains the queue, closes the writer)
+            # and the window, close the read connection, then exit.
             controller.stop()
             read_memory.close()
             rumps.quit_application()

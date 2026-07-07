@@ -1,66 +1,89 @@
 """The desktop app's controller — the testable state machine behind the menu bar.
-The rumps/pywebview shell and the asyncio tracking thread are native and marked
-pragma: no cover; this pins the start/stop/toggle logic the menu wires to."""
+ONE unified on/off state: active ⇔ (tracking running AND chat window open). No
+mixed states — closing the window stops tracking; the toggle controls everything.
+The rumps/pywebview shell and the asyncio tracking thread are native/pragma."""
 
 from cortana.desktop import DesktopController
 
 
 def _controller():
-    calls = {"start": 0, "stop": 0, "chat": 0, "rec": 0}
+    calls = {"start": 0, "stop": 0, "open": 0, "close": 0, "rec": 0}
     ctl = DesktopController(
         start_tracking=lambda: calls.__setitem__("start", calls["start"] + 1),
         stop_tracking=lambda: calls.__setitem__("stop", calls["stop"] + 1),
-        open_chat=lambda: calls.__setitem__("chat", calls["chat"] + 1),
+        open_chat=lambda: calls.__setitem__("open", calls["open"] + 1),
+        close_chat=lambda: calls.__setitem__("close", calls["close"] + 1),
         show_recommendation=lambda: calls.__setitem__("rec", calls["rec"] + 1),
     )
     return ctl, calls
 
 
-def test_starts_not_tracking():
+def test_starts_inactive():
     ctl, _ = _controller()
-    assert ctl.tracking is False
+    assert ctl.active is False
 
 
-def test_start_sets_tracking_and_invokes_callable():
+def test_start_activates_both_tracking_and_chat():
     ctl, calls = _controller()
     ctl.start()
-    assert ctl.tracking is True
-    assert calls["start"] == 1
+    assert ctl.active is True
+    assert calls["start"] == 1 and calls["open"] == 1     # one state, both effects
 
 
 def test_start_is_idempotent():
     ctl, calls = _controller()
     ctl.start()
     ctl.start()
-    assert calls["start"] == 1          # already running -> no second start
+    assert calls["start"] == 1 and calls["open"] == 1
 
 
-def test_stop_clears_tracking_and_invokes_callable():
+def test_stop_deactivates_both():
     ctl, calls = _controller()
     ctl.start()
     ctl.stop()
-    assert ctl.tracking is False
+    assert ctl.active is False
+    assert calls["stop"] == 1 and calls["close"] == 1
+
+
+def test_stop_is_idempotent_when_inactive():
+    ctl, calls = _controller()
+    ctl.stop()
+    assert calls["stop"] == 0 and calls["close"] == 0
+
+
+def test_toggle_flips_the_one_state():
+    ctl, calls = _controller()
+    ctl.toggle()
+    assert ctl.active is True and calls["start"] == 1 and calls["open"] == 1
+    ctl.toggle()
+    assert ctl.active is False and calls["stop"] == 1 and calls["close"] == 1
+
+
+def test_sync_stops_tracking_when_window_was_closed():
+    # The user closed the chat window (red X): active must become False and
+    # tracking must stop — no mixed state where tracking runs windowless.
+    ctl, calls = _controller()
+    ctl.start()
+    changed = ctl.sync(window_open=False)
+    assert changed is True
+    assert ctl.active is False
     assert calls["stop"] == 1
 
 
-def test_stop_is_idempotent_when_not_tracking():
+def test_sync_noop_when_state_matches_window():
     ctl, calls = _controller()
+    ctl.start()
+    assert ctl.sync(window_open=True) is False      # active + window open: fine
     ctl.stop()
-    assert calls["stop"] == 0
+    assert ctl.sync(window_open=False) is False     # inactive + closed: fine
+    assert calls["stop"] == 1                        # only the explicit stop
 
 
-def test_toggle_flips_state():
-    ctl, calls = _controller()
-    ctl.toggle()
-    assert ctl.tracking is True and calls["start"] == 1
-    ctl.toggle()
-    assert ctl.tracking is False and calls["stop"] == 1
-
-
-def test_open_chat_invokes_callable():
-    ctl, calls = _controller()
-    ctl.open_chat()
-    assert calls["chat"] == 1
+def test_label_reflects_the_one_state():
+    ctl, _ = _controller()
+    assert "Start" in ctl.label()
+    ctl.start()
+    assert "Stop" in ctl.label()
 
 
 def test_recommend_invokes_callable():
@@ -104,6 +127,29 @@ def test_chat_window_respawns_after_close():
     assert mgr.is_open() is False
     assert mgr.open() is True                     # reopening spawns a fresh one
     assert len(spawned) == 2
+
+
+def test_chat_window_close_terminates_and_is_idempotent():
+    from cortana.desktop import ChatWindowManager
+
+    class _KillableProc(_FakeProc):
+        def __init__(self):
+            super().__init__()
+            self.terminated = 0
+
+        def terminate(self):
+            self.terminated += 1
+            self.die()
+
+    spawned = []
+    mgr = ChatWindowManager(lambda: spawned.append(_KillableProc()) or spawned[-1])
+    mgr.close()                                   # close before open: no-op
+    mgr.open()
+    mgr.close()                                   # closes the live window
+    assert spawned[0].terminated == 1
+    assert mgr.is_open() is False
+    mgr.close()                                   # already closed: no second terminate
+    assert spawned[0].terminated == 1
 
 
 # --- recommendation_message (what "Get Recommendation" actually displays) -----
@@ -169,13 +215,6 @@ def test_recommendation_message_shows_error_instead_of_silence(tmp_path):
     finally:
         mem.close()
     assert "couldn't generate" in msg.lower()    # visible failure, not a dead button
-
-
-def test_tracking_label_reflects_state():
-    ctl, _ = _controller()
-    assert "Start" in ctl.tracking_label()
-    ctl.start()
-    assert "Stop" in ctl.tracking_label()
 
 
 # --- CLI surface (parser only; the native launch is pragma: no cover) --------
