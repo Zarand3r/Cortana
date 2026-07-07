@@ -18,7 +18,12 @@ _STOPWORDS = frozenset({
     "what", "was", "were", "the", "a", "an", "and", "or", "did", "do", "does",
     "i", "me", "my", "is", "are", "am", "on", "in", "at", "to", "of", "for",
     "this", "that", "when", "how", "why", "with", "you", "it", "be", "been",
-    "doing", "going", "get", "got",   # generic, low-signal verbs -> fall back to recent
+    "doing", "going", "get", "got", "work", "working",   # generic verbs -> fall back to recent
+    # temporal / present-tense fillers: these describe *when* (now), not *what*, so
+    # they must not become search terms — else "what am I doing right now" matches
+    # old screens that merely contain the words "now"/"right".
+    "now", "right", "currently", "current", "today", "recently", "lately", "just",
+    "moment", "presently", "here", "up",
 })
 
 _PER_MEMORY_CHARS = 400   # cap each memory's text in the prompt to bound size
