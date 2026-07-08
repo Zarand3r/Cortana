@@ -59,5 +59,10 @@ def redact(text: str) -> str:
 
 
 def redact_observation(obs: Observation) -> Observation:
-    """Redact the free-text fields of an observation before it is stored/summarized."""
-    return replace(obs, ocr_text=redact(obs.ocr_text), focused_text=redact(obs.focused_text))
+    """Redact every free-text field before it is stored/summarized. window_title is
+    included — it flows into memory AND the prompt, and titles routinely carry
+    secrets (e.g. reset URLs with `?token=`)."""
+    return replace(obs,
+                   ocr_text=redact(obs.ocr_text),
+                   focused_text=redact(obs.focused_text),
+                   window_title=redact(obs.window_title))

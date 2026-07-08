@@ -12,7 +12,6 @@ import contextlib
 import logging
 import signal
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import replace
 from datetime import datetime, timezone
 from enum import Enum, auto
 
@@ -22,13 +21,14 @@ from cortana.memory import Memory
 from cortana.metrics import Metrics
 from cortana.perception import (
     Observation,
+    ScreenSensor,
     Semantic,
     changed,
     content_hash,
     extract_meaning,
-    perceive,
 )
 from cortana.redaction import redact_observation
+from cortana.working_memory import WorkingMemory
 
 log = logging.getLogger("cortana.agent")
 
@@ -45,9 +45,11 @@ class Disposition(Enum):
 
 
 def plan_disposition(prev_hash: str | None, obs: Observation) -> Disposition:
-    """Assign ``obs.content_hash`` and decide whether the screen changed since the
-    previous perception. Pure — no I/O, so the producer's branch is unit-tested
-    without the event loop."""
+    """Decide whether the screen changed since the previous perception. If the sensor
+    already deduped by image (skipped OCR, ``skip_reason == 'unchanged'``), honor that
+    directly; otherwise dedup on the OCR text. Pure — unit-tested without the loop."""
+    if obs.skip_reason == "unchanged":            # pre-OCR image dedup (sensor)
+        return Disposition.UNCHANGED
     obs.content_hash = content_hash(obs.app_name, obs.window_title, obs.ocr_text)
     return Disposition.CHANGED if changed(prev_hash, obs.content_hash) else Disposition.UNCHANGED
 
@@ -66,8 +68,9 @@ class _AsyncMemory:
         self._loop = loop
         self._ex = executor
 
-    async def remember(self, observations, semantic):
-        return await self._loop.run_in_executor(self._ex, self._m.remember, observations, semantic)
+    async def remember(self, observations, semantic, embedder=None):
+        return await self._loop.run_in_executor(
+            self._ex, self._m.remember, observations, semantic, embedder)
 
     async def remember_dropped(self, observation):
         await self._loop.run_in_executor(self._ex, self._m.remember_dropped, observation)
@@ -81,14 +84,21 @@ class AgentLoop:
     executors (capture / llm / db). See docs/AGENT_LOOP.md."""
 
     def __init__(self, config: Config, memory: Memory, backend: LLMBackend,
-                 sensor=None) -> None:
+                 sensor=None, working_memory: WorkingMemory | None = None,
+                 embedder=None) -> None:
         self._cfg = config
         self._memory = memory
         self._backend = backend
-        # sensor: (ts) -> Observation | None. Default = the live native sensor;
-        # tests inject a fake so the loop runs without PyObjC.
-        self._sensor = sensor or (lambda ts: perceive(ts, config.ocr_languages))
+        self._embedder = embedder     # when set, store semantic vectors on write
+        # sensor: (ts) -> Observation | None. Default = the live native sensor with
+        # exact-hash image dedup (safe: any change still OCRs) and the privacy
+        # exclusion list enforced. Tests inject a fake so the loop runs without PyObjC.
+        self._sensor = sensor or ScreenSensor(config.ocr_languages, dedup=config.image_dedup,
+                                              excluded_bundles=config.excluded_bundles)
         self.metrics = Metrics()
+        # Short-term memory: recent changed observations, live in RAM. Shared with
+        # readers (chat/recommend) when injected; otherwise loop-local.
+        self.working = working_memory or WorkingMemory(maxlen=config.working_memory_max)
 
     @property
     def drops_total(self) -> int:
@@ -162,13 +172,17 @@ class AgentLoop:
                     break
 
     async def _route(self, obs, prev_hash, queue, amem) -> str:
-        """Apply the change-detection gate and enqueue / heartbeat / drop."""
+        """Apply the change-detection gate and enqueue / drop. Compaction: an
+        unchanged frame is NOT persisted — at 1s capture that would be O(seconds)
+        dead rows. Only distinct 'episodes' (changed screens) become rows; dwell
+        time is recoverable from the gap to the next episode's timestamp."""
         if plan_disposition(prev_hash, obs) is Disposition.UNCHANGED:
             self.metrics.unchanged += 1
-            heartbeat = replace(obs, skip_reason="unchanged", ocr_text="")
-            await amem.remember([heartbeat], None)   # dwell-time signal, no LLM
-            return prev_hash
+            if obs.skip_reason == "unchanged":       # sensor skipped OCR (image dedup)
+                self.metrics.ocr_skipped += 1
+            return prev_hash                         # idle: count it, store nothing
         self.metrics.changed += 1
+        self.working.add(obs)                        # short-term memory: recent activity
         try:
             queue.put_nowait(obs)
         except asyncio.QueueFull:
@@ -189,17 +203,37 @@ class AgentLoop:
             semantic: Semantic | None = None
             if any(o.captured and o.ocr_text for o in batch):
                 started = loop.time()
-                semantic = await loop.run_in_executor(
-                    llm_pool, extract_meaning, batch, self._backend, self._cfg.ocr_max_chars)
-                self.metrics.record_llm(loop.time() - started)
-                self.metrics.summarized += len(batch)
-            await amem.remember(batch, semantic)
-            for _ in batch:
-                queue.task_done()
+                # keep the total prompt budget ~constant when a drained backlog makes
+                # the batch large: shrink the per-event OCR cap proportionally.
+                per_event = max(600, self._cfg.ocr_max_chars * self._cfg.batch_size
+                                // max(1, len(batch)))
+                try:
+                    semantic = await loop.run_in_executor(
+                        llm_pool, extract_meaning, batch, self._backend, per_event)
+                    self.metrics.record_llm(loop.time() - started)
+                    self.metrics.summarized += len(batch)
+                except Exception as exc:  # noqa: BLE001 - backend down/slow/bad response
+                    # Degrade visibly: keep the observations (store without a summary),
+                    # count the error, and keep the loop alive rather than dying.
+                    self.metrics.llm_errors += 1
+                    log.warning("meaning extraction failed; storing %d events without "
+                                "summary: %s", len(batch), exc)
+            # task_done for every item even if remember/summarize raised, so a failure
+            # can never leave queue.join() hanging at shutdown.
+            try:
+                await amem.remember(batch, semantic, self._embedder)
+            except Exception as exc:  # noqa: BLE001
+                log.exception("failed to persist a batch of %d events: %s", len(batch), exc)
+            finally:
+                for _ in batch:
+                    queue.task_done()
 
     async def _collect_batch(self, queue, stop, loop):
         """Gather up to batch_size observations, or whatever arrives within
-        batch_window — draining promptly once stop is set."""
+        batch_window — draining promptly once stop is set. If a backlog has built up
+        (captures outpacing the LLM), drain immediately-available items up to
+        4×batch_size so one summarization call absorbs the backlog instead of the
+        queue growing until backpressure drops events."""
         batch: list[Observation] = []
         deadline = loop.time() + self._cfg.batch_window
         while len(batch) < self._cfg.batch_size:
@@ -211,6 +245,12 @@ class AgentLoop:
             try:
                 batch.append(await asyncio.wait_for(queue.get(), timeout=timeout))
             except asyncio.TimeoutError:
+                break
+        # adaptive drain: absorb any backlog that piled up while we waited/summarized
+        while len(batch) < self._cfg.batch_size * 4:
+            try:
+                batch.append(queue.get_nowait())
+            except asyncio.QueueEmpty:
                 break
         return batch
 

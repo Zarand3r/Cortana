@@ -47,6 +47,37 @@ def test_question_to_fts_none_when_only_stopwords():
     assert question_to_fts("what was i doing?") is None
 
 
+def test_question_to_fts_drops_temporal_fillers():
+    # "right"/"now"/"currently"/"today" describe *when*, not *what* — they must not
+    # become search terms (else they match old screens containing those words).
+    assert question_to_fts("what am i doing right now") is None
+    assert question_to_fts("what am i currently working on today") is None
+
+
+def test_present_tense_with_fillers_returns_recent_not_matching_old(tmp_path):
+    from cortana.embeddings import FakeEmbedder
+    mem = Memory(tmp_path / "m.db", check_same_thread=False)
+    # OLD screen that contains the filler words 'now'/'right'
+    mem.remember([_obs("click here now to claim your prize right away", app="Safari",
+                       ts="2026-07-01T09:00:00+00:00")], _sem("ad", "2026-07-01T09:00:00+00:00"))
+    # NEW / most-recent screen
+    mem.remember([_obs("editing the parser module", app="VSCode",
+                       ts="2026-07-07T14:00:00+00:00")], _sem("coding", "2026-07-07T14:00:00+00:00"))
+    ans = reason("what am I doing right now", mem, CapturingBackend(), embedder=FakeEmbedder())
+    assert ans.citations[0]["app_name"] == "VSCode"    # recent, not the old 'now/right' ad
+    mem.close()
+
+
+def test_present_tense_question_returns_recent_not_relevance(tmp_path):
+    # "what am I doing" is all stop-words -> even with an embedder, use recency, not a
+    # relevance ranking that could surface a stale-but-similar memory.
+    from cortana.embeddings import FakeEmbedder
+    mem = _seed(tmp_path)   # budget @09:00, email @12:00 (email is most recent)
+    ans = reason("what am I doing", mem, CapturingBackend(), embedder=FakeEmbedder())
+    assert ans.citations and ans.citations[0]["app_name"] == "Mail"   # most recent
+    mem.close()
+
+
 # --- reason() --------------------------------------------------------------- #
 
 def test_reason_retrieves_only_relevant_memories_as_citations(tmp_path):

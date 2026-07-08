@@ -14,7 +14,7 @@ from cortana.memory import Memory
 
 def test_build_config_defaults_match_config_file():
     cfg = build_config(["run"])
-    assert cfg.interval == 30.0
+    assert cfg.interval == 1.0
     assert cfg.backend == "ollama"
     assert cfg.model == "qwen2.5:7b-instruct"
 
@@ -32,6 +32,16 @@ def test_build_config_applies_overrides(tmp_path):
 def test_no_redact_flag_disables_redaction():
     assert build_config(["run", "--no-redact"]).redact is False
     assert build_config(["run"]).redact is True
+
+
+def test_chat_config_defaults_and_overrides():
+    cfg = build_config(["chat"])
+    assert cfg.chat_host == "127.0.0.1"
+    assert cfg.chat_port == 8808
+    over = build_config(["chat", "--port", "9000", "--host", "0.0.0.0", "--backend", "fake"])
+    assert over.chat_port == 9000
+    assert over.chat_host == "0.0.0.0"
+    assert over.backend == "fake"
 
 
 def test_validate_rejects_nonpositive_interval():

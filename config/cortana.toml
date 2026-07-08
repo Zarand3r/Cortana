@@ -6,10 +6,11 @@
 # in-code defaults.
 
 [perception]
-interval = 30.0                 # seconds between screen captures
+interval = 1.0                  # seconds between screen captures
 ocr_languages = ["en-US"]       # Vision OCR languages
 ocr_max_chars = 6000            # truncate OCR before store and before the prompt
-read_focused_text = false       # opt-in Accessibility focused-field read (high-sensitivity)
+image_dedup = true              # skip OCR on byte-identical frames (battery win during idle);
+                                # exact-pixel hash, safe — any visible change still runs OCR
 
 [llm]
 backend = "ollama"              # "ollama" | "mlx" | "fake"
@@ -17,12 +18,20 @@ model = "qwen2.5:7b-instruct"   # feasible default; "qwen2.5:72b-instruct-q6_K" 
 ollama_host = "http://127.0.0.1:11434"
 batch_size = 4                  # observations summarized per LLM call
 batch_window = 60.0             # ...or flush a partial batch after this many seconds
+embed = false                   # opt-in: semantic/hybrid retrieval (needs an embedding model)
+embed_model = "nomic-embed-text"  # local Ollama embedding model: `ollama pull nomic-embed-text`
+
+[chat]
+host = "127.0.0.1"              # bind address for the local chat web UI (localhost only)
+port = 8808                     # open http://127.0.0.1:8808 after `cortana chat`
+system_prompt = "You are Cortana, a private assistant running fully locally on the user's Mac. You are given a log of the user's recent on-screen activity below as CONTEXT; treat it as ground truth for what they are doing, and cite the time and app when you use it. If the context is empty, say nothing has been recorded yet (they may need to start tracking) — never claim you cannot see their screen. Be concise and accurate."
 
 [memory]
 db_path = "~/.local_mac_context.db"
 retention_days = 90             # age bound — drop memories older than this
 max_db_gib = 2.0                # size bound — evict oldest beyond this
 queue_max = 256                 # backpressure bound on the perception->memory queue
+working_memory_max = 200        # recent distinct observations kept in RAM (short-term memory)
 
 [privacy]
 redact = true                   # scrub high-confidence secrets (keys, tokens, cards, SSNs) before store

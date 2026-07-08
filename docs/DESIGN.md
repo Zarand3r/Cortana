@@ -19,16 +19,14 @@ answer the user — *"what was I working on this morning?"* — with nothing lea
 the machine.
 
 This is an **agent**, not a passive logger: tools (perception) + memory + an agent
-loop, with a recall/reasoning capability on top. The existing
-`context_tracker.py` (~600 lines) is effectively the **perceive→remember loop of
-that agent already running** — a clean producer/consumer pipeline, single-writer
-SQLite, fail-soft capture, real privacy reflexes (secure-input + password-manager
-exclusion, no keylogging). The architecture is the right backbone; what this design
-does is (a) re-group it into explicit agent subsystems — **Memory**, **Perception
-tools**, **Agent loop** — fixing the data model / bounds / privacy / search gaps
-along the way, and (b) add what a logger never had: an **agent loop** as a
-first-class concept and a **recall-&-reasoning** capability. No rewrite; the v0
-backbone is preserved and reframed.
+loop + a recall/reasoning + a proactive advisor, delivered as **one app** (the
+menu-bar desktop shell). It grew from an original single-file prototype
+(`context_tracker.py`, since removed) into the tested `cortana/` package: explicit
+agent subsystems — **Memory**, **Perception tools**, **Agent loop**, **Recall &
+reasoning**, **Guidance advisor** — with the data-model / bounds / privacy / search
+gaps of the prototype fixed, and the two things a logger never had added: an
+**agent loop** as a first-class concept and **recall + recommendation** on top. The
+package is the sole implementation.
 
 ## Success Metrics
 
@@ -56,7 +54,7 @@ backbone is preserved and reframed.
 - No keystroke logging. The only "active text" path is the opt-in Accessibility *focused-field* read.
 - No real-time/sub-second capture. This is a perceptual *journal* the agent reasons over, not a screen recorder.
 - No GUI in v1. Perception runs as a daemon; recall is a thin CLI (`cortana ask …`). A UI is a later project.
-- **No effector actions in v1.** The agent's "act" is read-only recall/reasoning over its own memory. Tools that *change the world* (proactive automation) are deferred to Phase 7, behind explicit confirmation.
+- **No effector actions in v1.** Proactive *advice* (read-only recommendations from recent activity — the guidance advisor) IS in scope and built. Tools that *change the world* (automation that acts on your behalf) remain deferred to Phase 7, behind explicit confirmation.
 - No general tool-using/ReAct framework. The Phase-4 reasoning path is thin RAG-over-memory, not a generic agent runtime.
 - No general plugin/extensibility framework. Two LLM backends is the scope.
 
@@ -194,9 +192,11 @@ reconstruct historical batch boundaries (lossy) — documented.
 **Change-detection gate (new — biggest efficiency + quality win):** in
 `capture_once`, compute `content_hash = sha256(normalize(app, title, ocr_text))`
 where `normalize` lowercases, collapses whitespace, and strips standalone
-time/date tokens (regex). If equal to the last stored event's hash, write a
-lightweight `skip_reason="unchanged"` heartbeat and **do not enqueue for
-summarization** — idle screens stop driving the model.
+time/date tokens (regex). If equal to the last event's hash, the frame is **not
+persisted at all** (compaction) and not enqueued — idle screens neither drive the
+model nor grow the DB. Only distinct episodes become rows; dwell time is the gap
+between consecutive episode timestamps. (This matters at the 1s default capture
+rate — see docs/MEMORY.md §Compaction.)
 
 **Visible backpressure:** on `QueueFull`, the evicted oldest event is **persisted**
 with `skip_reason="dropped_backpressure"` (fast path: direct synchronous insert,
@@ -211,7 +211,7 @@ secure_input?  ──yes──▶ skip("secure_input_active")
 excluded app?  ──yes──▶ skip("excluded_app")
 capture==None? ──yes──▶ skip("capture_blocked_or_no_permission")
 ocr error?     ──yes──▶ skip("ocr_error")          [keep metadata]
-unchanged?     ──yes──▶ skip("unchanged")          [NEW: store heartbeat, no LLM]
+unchanged?     ──yes──▶ count only, store nothing  [compaction; dwell = ts gap]
 otherwise      ──────▶ redact → enqueue full event
 ```
 
@@ -305,8 +305,8 @@ P1–P4 before breadth.
 - **Code:** build the `cortana/` package skeleton (`config`, `backends`,
   `perception`, `memory`) with **lazy** native imports so pure logic imports without
   PyObjC; `FakeLLMBackend` (canned record) in `make_backend`. `tests/` + `conftest`,
-  `check.sh` (`pytest -q`), `requirements-dev.txt`, `pytest.ini`. Legacy
-  `context_tracker.py` left running; Phase 3 rewires it onto the package.
+  `check.sh` (`pytest -q`), `requirements-dev.txt`, `pytest.ini`. (The legacy
+  `context_tracker.py` prototype has since been removed — the package is the app.)
 - **DoD:** `./check.sh` green on a clean checkout, zero native deps.
 
 ### Phase 1 — Memory *(what Cortana remembers + how it recalls)*
@@ -354,6 +354,13 @@ P1–P4 before breadth.
 - **Tests:** eval set of Q→expected-recall (deterministic via fake LLM asserting the
   *retrieved set*, not the prose); citation points to a real row.
 - **Scope guard:** thin RAG-over-memory only — NOT a generic ReAct/tool-runtime.
+
+### Phase 4b — Guidance advisor *(Cortana the proactive side — BUILT)*
+- **Capability:** `cortana recommend` → read recent activity → LLM suggests ONE
+  grounded next action, with the memories it drew on. The proactive sibling of
+  `ask`; surfaced in the desktop app as "Get Recommendation".
+- **Code:** `cortana/advisor.py` `recommend(memory, backend) -> Recommendation`
+  (recall most-recent, no query). Read-only advice — effector actions stay in Phase 7.
 
 ### Phase 5 — Privacy & safety guardrails *(cross-cutting; gates real-data runs)*
 - **Capability:** nothing sensitive enters memory; at-rest posture explicit.

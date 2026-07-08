@@ -69,8 +69,80 @@ class SlowBackend(FakeLLMBackend):
         return super().generate(prompt)
 
 
+class BrokenBackend(FakeLLMBackend):
+    """Simulates the LLM being down/erroring on every call."""
+
+    def generate(self, prompt):
+        raise RuntimeError("backend unavailable")
+
+
 def _run(loop_obj, **kw):
     asyncio.run(loop_obj.run(install_signal_handlers=False, **kw))
+
+
+# --- resilience: a failing backend degrades, it must not kill the loop ------ #
+
+def test_backend_failure_degrades_and_does_not_hang(make_memory):
+    sensor = ScriptedSensor([_obs("alpha"), _obs("beta", app="Mail")])
+    mem, be = make_memory(), BrokenBackend()
+    loop_obj = AgentLoop(_cfg(batch_size=1), mem, be, sensor)
+    # If the consumer died / didn't task_done, run() would hang on queue.join and
+    # this asyncio.run would exceed the test timeout. It must finish.
+    _run(loop_obj, max_ticks=2)
+    # Observations are still persisted (degraded: stored without a summary)...
+    rows = mem.recall(limit=100)
+    assert len(rows) == 2
+    assert all(r["summary"] is None for r in rows)     # no summary, but not lost
+    # ...and the failure is counted, not silent.
+    assert loop_obj.metrics.llm_errors == 2
+
+
+def test_image_dedup_uses_safe_exact_hash_on_by_default():
+    # Image dedup is on by default again — but now with an EXACT hash: it only skips
+    # OCR on byte-identical frames, so a content change can never be missed (the
+    # coarse perceptual hash that froze memory was replaced).
+    from cortana.config import Config
+    from cortana.perception import ScreenSensor
+    assert Config().image_dedup is True
+    assert ScreenSensor(("en-US",))._dedup is True
+
+
+def test_loop_honors_sensor_image_dedup(make_memory):
+    # A sensor that pre-deduped by image returns skip_reason='unchanged' (OCR skipped).
+    # The loop must treat it as unchanged: no LLM, not stored, and counted as an
+    # OCR-skip (the battery win).
+    unchanged = Observation(ts="2026-07-05T10:00:00+00:00", app_name="Notes",
+                            bundle_id="c", window_title="", ocr_text="",
+                            captured=True, skip_reason="unchanged")
+    sensor = ScriptedSensor([_obs("real screen"), unchanged, unchanged])
+    mem, be = make_memory(), FakeLLMBackend()
+    loop_obj = AgentLoop(_cfg(batch_size=1), mem, be, sensor)
+    _run(loop_obj, max_ticks=3)
+
+    assert be.calls == 1                          # only the one real (OCR'd) screen
+    assert mem.counts()["context"] == 1           # unchanged frames not stored
+    assert loop_obj.metrics.ocr_skipped == 2      # both dedup frames skipped OCR
+
+
+def test_loop_stores_embeddings_when_embedder_given(make_memory):
+    from cortana.embeddings import FakeEmbedder
+    sensor = ScriptedSensor([_obs("quarterly budget spreadsheet", app="Numbers")])
+    mem = make_memory()
+    loop_obj = AgentLoop(_cfg(batch_size=1), mem, FakeLLMBackend(), sensor,
+                         embedder=FakeEmbedder())
+    _run(loop_obj, max_ticks=1)
+    n = mem._conn.execute("SELECT count(*) FROM embeddings").fetchone()[0]
+    assert n == 1                                  # semantic vector stored on write
+
+
+def test_loop_populates_working_memory_with_changed_observations(make_memory):
+    sensor = ScriptedSensor([_obs("screen A"), _obs("screen A"),   # repeat -> heartbeat
+                             _obs("screen B", app="Mail")])
+    loop_obj = AgentLoop(_cfg(batch_size=1), make_memory(), FakeLLMBackend(), sensor)
+    _run(loop_obj, max_ticks=3)
+    # working memory holds the distinct (changed) observations, live in RAM
+    recent = loop_obj.working.recent()
+    assert [o.ocr_text for o in recent] == ["screen A", "screen B"]  # not the repeat
 
 
 # --- end-to-end spine ------------------------------------------------------- #
@@ -91,18 +163,19 @@ def test_perceive_remember_recall_end_to_end(make_memory):
     assert mem.counts()["summaries"] == be.calls          # one summary per batch
 
 
-# --- P11: idle screens never call the LLM ----------------------------------- #
+# --- idle screens never call the LLM and are NOT persisted (compaction) ------ #
 
-def test_idle_screens_skip_llm(make_memory):
+def test_idle_screens_skip_llm_and_are_not_stored(make_memory):
     sensor = ScriptedSensor([_obs("same screen")] * 5 + [_obs("different screen")])
     mem, be = make_memory(), FakeLLMBackend()
     _run(AgentLoop(_cfg(batch_size=1), mem, be, sensor), max_ticks=6)
 
     assert be.calls == 2                                   # 2 distinct screens, not 6
-    rows = mem.recall(limit=100)
-    heartbeats = [r for r in rows if r["skip_reason"] == "unchanged"]
-    assert len(heartbeats) == 4                            # the 4 repeats
-    assert mem.counts()["context"] == 6
+    # Compaction: only the 2 distinct episodes are stored — idle frames aren't rows.
+    # (At 1s capture this is what keeps the DB from exploding.)
+    assert mem.counts()["context"] == 2
+    assert mem._conn.execute(
+        "SELECT count(*) FROM context WHERE skip_reason='unchanged'").fetchone()[0] == 0
 
 
 def test_changed_but_no_ocr_text_skips_llm(make_memory):
@@ -233,9 +306,11 @@ def test_slow_llm_does_not_stall_capture(make_memory):
     mem, be = make_memory(), SlowBackend(0.02)
     _run(AgentLoop(_cfg(batch_size=1, queue_max=256), mem, be, sensor), max_ticks=8)
 
-    # big queue absorbed the burst; the slow consumer caught up during drain.
+    # big queue absorbed the burst; the slow consumer caught up during drain —
+    # and the adaptive batch drain absorbed the backlog into FEWER LLM calls
+    # (that's the capacity fix: batch size adapts to backlog).
     assert mem.counts()["context"] == 8                    # all captures recorded
-    assert be.calls == 8
+    assert 1 <= be.calls < 8                               # batched, not per-event
 
 
 # --- P12: graceful drain on stop -------------------------------------------- #

@@ -76,6 +76,12 @@ def changed(prev_hash: str | None, new_hash: str) -> bool:
     return prev_hash != new_hash
 
 
+# Pre-OCR image dedup uses an EXACT image hash (below): skip OCR only when the frame
+# is byte-identical to the last. Safe by construction — any content change (typing,
+# scroll, new text) changes pixels → OCR runs; only truly static frames skip. (An
+# earlier coarse *perceptual* hash saw layout not text and froze memory — removed.)
+
+
 # --------------------------------------------------------------------------- #
 # Meaning extraction (the LLM tool). Sync; the Phase-3 loop wraps in executor. #
 # --------------------------------------------------------------------------- #
@@ -117,6 +123,38 @@ def extract_meaning(batch: list[Observation], backend: LLMBackend,
         window_start_ts=batch[0].ts,
         window_end_ts=batch[-1].ts,
     )
+
+
+# --------------------------------------------------------------------------- #
+# Synthetic sensor — for deps-free local runs / demos (no PyObjC, no model).   #
+# --------------------------------------------------------------------------- #
+_DEMO_SCREENS: list[tuple[str, str, str]] = [
+    ("Visual Studio Code", "agent.py — Cortana",
+     "class AgentLoop: async def run(self): perceive -> remember loop"),
+    ("Google Chrome", "SQLite FTS5 — full-text search",
+     "external content tables keep the index in sync via triggers; MATCH queries"),
+    ("Mail", "Inbox — 2 unread",
+     "Subject: Q3 budget review  From: finance@company.com  Please review by Friday"),
+    ("Terminal", "cortana — zsh",
+     "$ python -m cortana ask 'what was I doing'  145 passed"),
+]
+
+
+def make_demo_sensor(scripts: list[tuple[str, str, str]] | None = None):
+    """Return a sensor ``(ts) -> Observation`` that cycles through scripted
+    (app, window_title, ocr_text) screens. Lets the full loop run with no PyObjC
+    and no model (``cortana run --demo --backend fake``) for local testing."""
+    screens = scripts or _DEMO_SCREENS
+    state = {"i": 0}
+
+    def sensor(ts: str) -> Observation:
+        app, title, ocr = screens[state["i"] % len(screens)]
+        state["i"] += 1
+        return Observation(ts=ts, app_name=app,
+                           bundle_id=f"com.demo.{app.split()[0].lower()}",
+                           window_title=title, ocr_text=ocr, captured=True)
+
+    return sensor
 
 
 # --------------------------------------------------------------------------- #
@@ -165,6 +203,61 @@ def perceive(ts: str, languages: tuple[str, ...] = ("en-US",)) -> Observation:  
         return Observation(ts, app_name, bundle_id, "", "", captured=False,
                            skip_reason=f"ocr_error: {exc}")
     return Observation(ts, app_name, bundle_id, "", text, captured=True)
+
+
+def image_hash(cgimage) -> str:  # pragma: no cover - native macOS (Quartz)
+    """Exact hash of a CGImage's raw pixels. Identical frames -> identical hash; ANY
+    visible change -> different hash. Native bitmap read; the sensor falls back to OCR
+    if this raises."""
+    import hashlib as _hashlib
+
+    import Quartz  # lazy
+    provider = Quartz.CGImageGetDataProvider(cgimage)
+    data = Quartz.CGDataProviderCopyData(provider)
+    return _hashlib.sha256(bytes(data)).hexdigest()
+
+
+class ScreenSensor:  # pragma: no cover - native macOS (capture/OCR)
+    """The live sensor. With ``dedup=True`` (default) it skips the expensive OCR pass
+    when the screenshot is **byte-identical** to the previous frame — saving battery
+    during genuinely static periods (reading, idle). Safe by construction: any content
+    change alters pixels, so OCR still runs and no content is missed. With
+    ``dedup=False`` every frame is OCR'd. Any hashing error falls back to OCR."""
+
+    def __init__(self, languages: tuple[str, ...] = ("en-US",), *,
+                 dedup: bool = True,
+                 excluded_bundles: frozenset[str] = frozenset()) -> None:
+        self._languages = languages
+        self._dedup = dedup
+        self._excluded = excluded_bundles
+        self._last_hash: str | None = None
+
+    def __call__(self, ts: str) -> Observation:
+        app_name, bundle_id, _pid = frontmost_app()
+        if bundle_id in self._excluded:      # privacy: never capture excluded apps
+            return Observation(ts, app_name, bundle_id, "", "", captured=False,
+                               skip_reason="excluded_app")
+        image = capture_screen()
+        if image is None:
+            return Observation(ts, app_name, bundle_id, "", "", captured=False,
+                               skip_reason="capture_blocked_or_no_permission")
+        h = None
+        if self._dedup:
+            try:
+                h = image_hash(image)
+            except Exception:  # noqa: BLE001 - hashing must never break capture
+                h = None
+            if h is not None and h == self._last_hash:      # byte-identical -> skip OCR
+                return Observation(ts, app_name, bundle_id, "", "", captured=True,
+                                   skip_reason="unchanged", content_hash=h)
+        try:
+            text = ocr_image(image, self._languages)
+        except Exception as exc:  # noqa: BLE001 - OCR failure is non-fatal
+            return Observation(ts, app_name, bundle_id, "", "", captured=False,
+                               skip_reason=f"ocr_error: {exc}")
+        if h is not None:
+            self._last_hash = h
+        return Observation(ts, app_name, bundle_id, "", text, captured=True)
 
 
 def ocr_image(cgimage, languages: tuple[str, ...] = ("en-US",)) -> str:  # pragma: no cover - native macOS (Vision)

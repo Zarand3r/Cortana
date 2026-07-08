@@ -4,7 +4,7 @@ import sqlite3
 
 from cortana.memory import Memory
 
-# The v0 schema shipped by context_tracker.py (denormalized summary per row).
+# The legacy v0 schema (denormalized summary per row) we migrate away from.
 _LEGACY_SCHEMA = """
 CREATE TABLE context (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -46,12 +46,12 @@ def test_legacy_migration(tmp_path):
 
     mem = Memory(db)   # opening triggers migration
 
-    # upgraded version
-    assert mem._conn.execute("PRAGMA user_version").fetchone()[0] == 2
-    # new structures exist
+    # upgraded version (v0 -> current)
+    assert mem._conn.execute("PRAGMA user_version").fetchone()[0] == 4
+    # new structures exist (v2 summaries/FTS + v3 embeddings + v4 reflections)
     tables = {r[0] for r in mem._conn.execute(
         "SELECT name FROM sqlite_master WHERE type IN ('table','view')")}
-    assert {"summaries", "context_fts"} <= tables
+    assert {"summaries", "context_fts", "embeddings", "reflections"} <= tables
     # new columns added; legacy `summary` column retained (read-only)
     cols = {r[1] for r in mem._conn.execute("PRAGMA table_info(context)")}
     assert {"summary_id", "content_hash", "summary"} <= cols
@@ -70,6 +70,6 @@ def test_migration_is_idempotent(tmp_path):
     _seed_legacy(db)
     Memory(db).close()        # migrate once
     mem = Memory(db)          # open again — must not re-migrate or error
-    assert mem._conn.execute("PRAGMA user_version").fetchone()[0] == 2
+    assert mem._conn.execute("PRAGMA user_version").fetchone()[0] == 4
     assert mem.counts()["context"] == 2
     mem.close()

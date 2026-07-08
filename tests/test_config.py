@@ -13,7 +13,7 @@ def _write(tmp_path, body: str) -> Path:
 
 def test_defaults_when_no_file():
     cfg = Config()
-    assert cfg.interval == 30.0
+    assert cfg.interval == 1.0
     assert cfg.model == "qwen2.5:7b-instruct"
     assert cfg.retention_days == 90
     assert cfg.max_db_bytes == 2 * GIB

@@ -45,6 +45,13 @@ def test_changed():
     assert changed("other", h) is True
 
 
+# --- pre-OCR image dedup (exact hash: safe by construction) ----------------- #
+
+def test_screen_sensor_dedup_defaults_on():
+    from cortana.perception import ScreenSensor
+    assert ScreenSensor(("en-US",))._dedup is True                   # battery win, safe
+
+
 # --- prompt building -------------------------------------------------------- #
 
 def test_build_meaning_prompt_contains_metadata():
