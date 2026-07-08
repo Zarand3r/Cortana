@@ -40,7 +40,14 @@ permission boundary.
 - **`DesktopController`** (tested): the start/stop/toggle state machine the menu wires
   to; delegates real work to injected callables.
 - **`_TrackingService`** (native): runs `AgentLoop` on a private event loop in a daemon
-  thread; `stop()` cancels the run task — `AgentLoop.run`'s `finally` drains + closes.
+  thread. `stop()` is **non-blocking** — it schedules cancellation and clears working
+  memory, then returns; the daemon thread drains the queue + closes the writer in
+  `AgentLoop.run`'s `finally`. A restart waits for the previous writer to finish
+  *inside the new background thread* (`_prev.join()` in `_run`), so two SQLite writers
+  never coexist and the menu thread never blocks. Quit calls `join()` on a **worker**
+  thread to guarantee the drain, then `AppHelper.callAfter(rumps.quit_application)` —
+  otherwise the join (up to `batch_window`+seconds if an LLM call is mid-flight) would
+  beachball the menu bar.
 - **chat server**: `chatapp.serve(..., memory=...)` in a daemon thread, so chat works
   whether or not tracking is on. Reads the same WAL SQLite the tracker writes.
 

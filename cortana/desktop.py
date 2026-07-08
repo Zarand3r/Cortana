@@ -110,6 +110,7 @@ class _TrackingService:  # pragma: no cover - threads + asyncio + native sensor
         self._loop = None
         self._task = None
         self._memory = None
+        self._prev = None      # a stopping thread that must fully close before a restart
 
     def start(self) -> None:
         import asyncio
@@ -128,6 +129,12 @@ class _TrackingService:  # pragma: no cover - threads + asyncio + native sensor
         import asyncio
 
         from cortana.cli import make_loop
+        # If a previous session is still draining/closing its writer, wait for it HERE
+        # (on this background thread, never the menu thread) so we never open a second
+        # SQLite writer — restart is safe without blocking the UI.
+        if self._prev is not None:
+            self._prev.join()
+            self._prev = None
         asyncio.set_event_loop(self._loop)
         agent, self._memory = make_loop(self._cfg, working_memory=self._working)
         self._task = self._loop.create_task(agent.run(install_signal_handlers=False))
@@ -144,14 +151,26 @@ class _TrackingService:  # pragma: no cover - threads + asyncio + native sensor
             self._task.cancel()
 
     def stop(self) -> None:
-        # Schedule cancellation on the loop thread; queued before the loop starts, it
-        # runs once _run has created the task — so a fast Start→Stop still cancels.
+        # Non-blocking: signal cancellation and drop stale session data, then return
+        # immediately. The daemon thread drains the queue + closes the writer in
+        # AgentLoop.run's finally; a later start() waits for it (inside _run). Callers
+        # that must guarantee the drain finished (quit) call join() — off the menu
+        # thread, so stopping never beachballs the menu bar (the join could take
+        # several seconds if an LLM call is mid-flight).
         if self._loop:
             self._loop.call_soon_threadsafe(self._cancel)
-        if self._thread:
-            self._thread.join(timeout=self._cfg.batch_window + 30)
+        # Hand the draining thread to _prev so a restart waits for it, not the caller.
+        if self._thread is not None:
+            self._prev, self._thread, self._loop = self._thread, None, None
         if self._working is not None:
             self._working.clear()     # stale session data must not be served as "now"
+
+    def join(self, timeout=None) -> None:
+        """Block until the tracking thread (current or draining) has finished — used
+        only on quit, always off the menu thread."""
+        for t in (self._prev, self._thread):
+            if t is not None:
+                t.join(timeout)
 
 
 def _serve_chat_background(cfg, backend, memory,
@@ -283,11 +302,17 @@ def run_app(cfg) -> int:  # pragma: no cover - native menu-bar app (rumps)
             controller.recommend()
 
         def _quit(self, _):
-            # Clean shutdown: stop tracking (drains the queue, closes the writer)
-            # and the window, close the read connection, then exit.
-            controller.stop()
-            read_memory.close()
-            rumps.quit_application()
+            # Clean shutdown: stop tracking + close the window, WAIT for the queue to
+            # drain and the writer to close, then close the read connection and exit.
+            # The drain (service.join) can take seconds, so run it on a worker thread
+            # and marshal the actual quit back onto the main/Cocoa thread — otherwise
+            # the menu bar beachballs while draining.
+            def shutdown():
+                controller.stop()                       # non-blocking cancel + close window
+                service.join(timeout=cfg.batch_window + 30)   # wait for the drain here
+                read_memory.close()                     # lock-guarded; safe vs live recall
+                AppHelper.callAfter(rumps.quit_application)
+            threading.Thread(target=shutdown, name="cortana-quit", daemon=True).start()
 
     CortanaApp().run()
     return 0

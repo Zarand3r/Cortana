@@ -60,7 +60,8 @@ def build_answer_prompt(question: str, memories: list[dict],
     if reflections:
         parts.append("\n--- REFLECTIONS (consolidated summaries of past periods) ---")
         for r in reflections:
-            parts.append(f"[{r['period_start']} … {r['period_end']}] {r['text']}")
+            parts.append(f"[{r['period_start']} … {r['period_end']}] "
+                         f"{r['text'][:_PER_MEMORY_CHARS]}")
     parts.append("\n--- RETRIEVED MEMORIES ---")
     if not memories:
         parts.append("(none)")

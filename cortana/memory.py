@@ -394,7 +394,16 @@ class Memory:
         sem_rows = self._conn.execute(
             f"SELECT e.context_id, e.vec FROM embeddings e "
             f"JOIN context c ON c.id=e.context_id WHERE {filt}", fparams)
-        sims = [(cid, cosine(qvec, json.loads(vec))) for cid, vec in sem_rows]
+        # Skip vectors that don't match the query's dimension (a stored vector from a
+        # different embed_model, or a corrupt/empty row). cosine() raises ValueError
+        # on a mismatch; a bare list-comp would let ONE bad row abort the whole scan
+        # and silently demote every hybrid query to keyword-only.
+        sims = []
+        for cid, vec in sem_rows:
+            try:
+                sims.append((cid, cosine(qvec, json.loads(vec))))
+            except ValueError:
+                continue
         sims.sort(key=lambda t: t[1], reverse=True)
         sem = [cid for cid, _ in sims[:candidate_k]]
         return reciprocal_rank_fusion([kw, sem])[:limit]
@@ -438,4 +447,8 @@ class Memory:
         }
 
     def close(self) -> None:
-        self._conn.close()
+        # Take the read lock so we never close the connection out from under an
+        # in-flight chat recall sharing it (the desktop closes read_memory on quit
+        # while the chat server's request threads may still be querying).
+        with self._lock:
+            self._conn.close()

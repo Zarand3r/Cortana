@@ -142,3 +142,56 @@ def test_consolidation_prompt_chronological_and_deduped(tmp_path):
     assert be.prompt.count("batch summary") == 1                 # deduped
     assert be.prompt.index("batch summary") < be.prompt.index("later summary")  # chronological
     mem.close()
+
+
+# --- Review pass 3 -----------------------------------------------------------
+
+# P0: one bad-dimension embedding must not kill the whole hybrid path.
+def test_hybrid_recall_survives_bad_dimension_vector(tmp_path):
+    emb = FakeEmbedder()                                     # dim 128
+    mem = Memory(tmp_path / "m.db")
+    mem.remember([_obs("quarterly budget spreadsheet", app="Numbers")], _sem(), embedder=emb)
+    mem.remember([_obs("python asyncio event loop", app="Terminal")], _sem(), embedder=emb)
+    # Corrupt the Terminal row's vector to a different dimension — as if embed_model
+    # changed, or Ollama returned a short/empty vector. cosine() will raise on it.
+    mem._conn.execute("UPDATE embeddings SET vec = ? WHERE context_id = "
+                      "(SELECT id FROM context WHERE app_name='Terminal')",
+                      (json.dumps([1.0, 2.0, 3.0]),))
+    mem._conn.commit()
+    # "budget report": keyword-only misses (implicit AND, no row has 'report'); only
+    # the semantic branch can surface the budget row. If the bad vector aborted the
+    # scan, recall would fall back to keyword-only and return nothing.
+    hits = mem.recall(query="budget report", embedder=emb)
+    assert hits and hits[0]["app_name"] == "Numbers"        # hybrid still works
+    mem.close()
+
+
+# P1: a long reflection must be capped in the answer prompt, like memories are.
+def test_reflection_text_capped_in_prompt():
+    from cortana.reasoning import build_answer_prompt, _PER_MEMORY_CHARS
+    long_text = "x" * (_PER_MEMORY_CHARS + 500)
+    prompt = build_answer_prompt(
+        "q", memories=[],
+        reflections=[{"period_start": "a", "period_end": "b", "text": long_text}])
+    assert ("x" * _PER_MEMORY_CHARS) in prompt
+    assert ("x" * (_PER_MEMORY_CHARS + 1)) not in prompt     # not the full untruncated blob
+
+
+# P1: close() serializes against in-flight recall on the shared read connection.
+def test_close_waits_for_in_flight_recall(tmp_path):
+    import threading
+    mem = Memory(tmp_path / "m.db", check_same_thread=False)
+    mem.remember([_obs("some text")], _sem())
+    mem._lock.acquire()                                      # simulate a recall holding the lock
+    closed = threading.Event()
+
+    def do_close():
+        mem.close()
+        closed.set()
+
+    t = threading.Thread(target=do_close, daemon=True)
+    t.start()
+    assert not closed.wait(0.2)                              # close blocks while lock is held
+    mem._lock.release()
+    assert closed.wait(1.0)                                  # proceeds once the lock frees
+    t.join()

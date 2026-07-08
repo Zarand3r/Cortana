@@ -62,6 +62,36 @@ hygiene. Nothing required structural redesign.
 - **`period_start`/`period_end` in consolidation** were already correct for the
   DESC recall order (only the *prompt* order was wrong — fixed as #13).
 
+## 1b. Second review pass (2026-07-08) — fixed
+
+Two fresh-context adversarial reviewers (desktop lifecycle/concurrency; memory/
+retrieval correctness), same verify-against-source discipline. Three confirmed
+real, patched + regression-tested; the rest rejected (see §2b).
+
+| # | Sev | Finding | Fix |
+|---|---|---|---|
+| 17 | **P0** | **One bad-dimension embedding silently killed ALL hybrid recall.** `_hybrid_ids` scored vectors in a list-comp `cosine(qvec, json.loads(vec))`; `cosine` raises `ValueError` on a dimension mismatch (a vector from a changed `embed_model`, or a short/empty vector from a bad Ollama response that `remember` still stored). The raise propagated to `recall`'s broad `except`, which demoted **every** hybrid query to keyword-only for the life of that bad row. | Score in a loop; `except ValueError: continue` skips the incompatible row and keeps the rest. Semantic ranking degrades gracefully instead of vanishing. Regression test seeds a wrong-dim vector and asserts a keyword-only-miss query still hits via semantic. |
+| 18 | **P0** (UX) | **Stopping beachballed the menu bar.** `_TrackingService.stop()` joined the tracking thread (`timeout = batch_window + 30`) on the caller's thread — and every stop path (toggle-off, window-close `_sync`, Quit) ran on the rumps **main thread**. A mid-flight LLM call froze the menu for seconds. | `stop()` is now non-blocking (schedule cancel + clear working memory, return). The daemon thread drains + closes the writer in `AgentLoop.run`'s `finally`. A restart waits for the previous writer to close **inside the new background thread** (`_prev.join()` in `_run`) — never opening a 2nd SQLite writer, never blocking the UI. Quit calls a new `service.join()` on a **worker** thread, then `AppHelper.callAfter(rumps.quit_application)`. (Native/`pragma`; verified by reasoning, not a hermetic test.) |
+| 19 | **P1** | **`reason()` injected reflection text uncapped** while retrieved memories were capped at `_PER_MEMORY_CHARS` — a long consolidated reflection could dominate/blow the prompt budget. | `build_answer_prompt` now truncates each reflection with `[:_PER_MEMORY_CHARS]`, matching the memory lines. Regression test. |
+| 20 | **P1** | **`Memory.close()` raced in-flight chat recall.** The desktop closes the shared read connection on Quit while the chat server's request threads may still be querying it; `close()` didn't take the read lock the recall path holds. | `close()` now acquires `self._lock` before closing. Deterministic regression test asserts `close()` blocks while the lock is held and proceeds when freed. |
+
+## 2b. Second-pass claims verified and REJECTED
+
+- **"`_TrackingService` start/stop cancel is a no-op race" (`_cancel` runs before
+  `_task` is set).** False — `_run` creates `self._task` synchronously *before*
+  `run_until_complete` starts the loop, and `call_soon_threadsafe(_cancel)` only
+  executes once the loop runs, so `_task` is always set when `_cancel` fires.
+- **"Window-close leaves a mixed state — chat server + `read_memory` stay alive."**
+  Working as intended: the chat server is a process-lifetime daemon; with no window
+  pointed at it it's inert, and a later Start reuses it. The "one state" contract is
+  about *tracking ⇔ window*, which `sync` upholds. Not a bug.
+- **"Adaptive drain violates the ≈-constant prompt budget at the 600-char floor."**
+  Real but intended: the floor trades a bounded prompt-size increase for not dropping
+  observations under a burst. Documented in REVIEW #7; no change.
+- **Also re-confirmed clean:** `remember()` index↔vector alignment, migration
+  idempotency, consolidation ordering, `WorkingMemory` locking, restart reusing a
+  closed loop (Start assigns a fresh loop).
+
 ## 3. Remaining recommendations (not done — prioritized)
 
 1. **(P1) Surface tracking-thread death in the menu.** If the loop crashes (e.g.
@@ -105,8 +135,8 @@ hygiene. Nothing required structural redesign.
 
 ## 5. Verification
 
-- `./ci/run.sh` — **231 passed**, branch coverage above the 95% gate, hermetic
-  (no PyObjC/Ollama/network).
+- `./ci/run.sh` — **236 passed** (231 first pass + 5 second pass), branch coverage
+  96.0% (above the 95% gate), hermetic (no PyObjC/Ollama/network).
 - New regression tests: `tests/test_review_fixes.py` (privacy exclusion, cosine
   guard, reflections-in-prompt, reflection pruning, backlog drain, live chat
   context, consolidation ordering) plus the updated cadence test.
