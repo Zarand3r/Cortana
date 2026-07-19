@@ -1,34 +1,48 @@
 """py2app build config for the Cortana menu-bar desktop app.
 
-    ./setup.sh                                    # install deps first
-    ./.venv/bin/python packaging/build_app.py py2app   # -> dist/Cortana.app
+Do not run directly — use ``./scripts/build_release.sh``, which installs the desktop +
+MLX + build deps into a clean venv, runs this, then signs/notarizes/DMGs the result.
 
-Run from the repo root. Kept separate from pyproject.toml so `pip install` (the
-normal path) never triggers a py2app build. The bundle owns its own TCC grants
-(Screen Recording / Accessibility), so perception + chat + inference run under one
-permission boundary. See docs/DESKTOP.md for signing/notarization (required for
-grants to persist).
+The bundle owns its own TCC grant (Screen Recording), so perception + chat + on-device
+MLX inference run under one permission boundary. LSUIElement makes it a menu-bar-only
+app (top of screen, no Dock icon). The model itself is NOT bundled — it downloads once
+on first run (see cortana.runtime), keeping the artifact ~small.
 
-NOTE: this build has not been exercised in CI (no GUI / py2app in the test env);
-treat it as the starting scaffold and verify on a real Mac.
+Verify the built bundle on a real Mac (no GUI/py2app in CI); see docs/DESKTOP.md.
 """
+from pathlib import Path
+
 from setuptools import setup
 
-APP = ["desktop_app.py"]
+_ROOT = Path(__file__).resolve().parent.parent
+APP = [str(_ROOT / "desktop_app.py")]
 
 OPTIONS = {
     "argv_emulation": False,
-    "packages": ["cortana"],
-    "includes": ["webview", "rumps"],
-    # Ship the chat UI and default config alongside the code.
-    "resources": ["cortana/webui/index.html", "config/cortana.toml"],
+    "packages": [
+        "cortana",
+        # Bundled local runtime + its downloader (single-artifact: no external Ollama).
+        "mlx", "mlx_lm", "huggingface_hub",
+        # Native shell.
+        "rumps", "webview", "objc",
+    ],
+    "includes": ["cortana.runtime"],
+    # Ship the chat UI + default config next to the code.
+    "resources": [str(_ROOT / "cortana" / "webui" / "index.html"),
+                  str(_ROOT / "config" / "cortana.toml")],
     "plist": {
         "CFBundleName": "Cortana",
         "CFBundleDisplayName": "Cortana",
         "CFBundleIdentifier": "com.cortana.app",
         "CFBundleShortVersionString": "0.1.0",
-        "LSUIElement": True,            # menu-bar-only (no Dock icon)
+        "CFBundleVersion": "0.1.0",
+        "LSUIElement": True,                 # menu-bar-only (no Dock icon)
+        "LSMinimumSystemVersion": "13.0",    # ScreenCaptureAccess APIs
         "NSHighResolutionCapable": True,
+        "NSHumanReadableCopyright": "On-device. Your screen data never leaves this Mac.",
+        # Screen Recording has no Info.plist usage key — it's a runtime TCC grant
+        # requested via CGRequestScreenCaptureAccess (cortana.runtime). Left as a note
+        # so nobody adds a bogus key expecting it to matter.
     },
 }
 

@@ -175,6 +175,33 @@ def frontmost_app() -> tuple[str, str, int | None]:  # pragma: no cover - native
     )
 
 
+def frontmost_window_title(pid: int | None) -> str:  # pragma: no cover - native macOS (Quartz)
+    """Title of the frontmost on-screen window owned by ``pid`` ("" if unavailable).
+
+    Uses ``CGWindowListCopyWindowInfo`` (front-to-back order); ``kCGWindowName`` is
+    populated because the bundle holds the Screen Recording grant. Fail-soft: any
+    native error or missing name yields "" — a title is a nice-to-have, never fatal."""
+    if pid is None:
+        return ""
+    try:
+        import Quartz  # lazy
+        windows = Quartz.CGWindowListCopyWindowInfo(
+            Quartz.kCGWindowListOptionOnScreenOnly | Quartz.kCGWindowListExcludeDesktopElements,
+            Quartz.kCGNullWindowID,
+        ) or []
+        for win in windows:                       # front-to-back: first match is topmost
+            if win.get("kCGWindowOwnerPID") != pid:
+                continue
+            if win.get("kCGWindowLayer", 0) != 0:  # skip menu bar / overlays (non-zero layer)
+                continue
+            name = win.get("kCGWindowName")
+            if name:
+                return str(name)
+        return ""
+    except Exception:  # noqa: BLE001 - a missing title must never break capture
+        return ""
+
+
 def capture_screen():  # pragma: no cover - native macOS (Quartz)
     """Capture the whole desktop as a CGImageRef, or None if blocked."""
     import Quartz  # lazy
@@ -233,7 +260,7 @@ class ScreenSensor:  # pragma: no cover - native macOS (capture/OCR)
         self._last_hash: str | None = None
 
     def __call__(self, ts: str) -> Observation:
-        app_name, bundle_id, _pid = frontmost_app()
+        app_name, bundle_id, pid = frontmost_app()
         if bundle_id in self._excluded:      # privacy: never capture excluded apps
             return Observation(ts, app_name, bundle_id, "", "", captured=False,
                                skip_reason="excluded_app")
@@ -257,7 +284,8 @@ class ScreenSensor:  # pragma: no cover - native macOS (capture/OCR)
                                skip_reason=f"ocr_error: {exc}")
         if h is not None:
             self._last_hash = h
-        return Observation(ts, app_name, bundle_id, "", text, captured=True)
+        return Observation(ts, app_name, bundle_id, frontmost_window_title(pid), text,
+                           captured=True)
 
 
 def ocr_image(cgimage, languages: tuple[str, ...] = ("en-US",)) -> str:  # pragma: no cover - native macOS (Vision)

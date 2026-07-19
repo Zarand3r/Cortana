@@ -78,6 +78,12 @@ class _AsyncMemory:
     async def prune(self):
         return await self._loop.run_in_executor(self._ex, self._m.prune)
 
+    async def consolidate(self, backend):
+        """Run a consolidation pass (recall recent episodes -> reflection) on the db
+        executor, keeping it serial with writes (single-writer discipline)."""
+        from cortana.consolidation import consolidate
+        return await self._loop.run_in_executor(self._ex, consolidate, self._m, backend)
+
 
 class AgentLoop:
     """Cortana's continuous perceive→remember loop on asyncio + single-worker
@@ -264,3 +270,9 @@ class AgentLoop:
             if elapsed >= _PRUNE_INTERVAL:
                 elapsed = 0.0
                 await amem.prune()
+                # Consolidate the day's episodes into a durable reflection so the
+                # semantic tier accrues automatically (no manual `cortana digest`).
+                try:
+                    await amem.consolidate(self._backend)
+                except Exception as exc:  # noqa: BLE001 - never let upkeep kill the loop
+                    log.warning("scheduled consolidation failed: %s", exc)

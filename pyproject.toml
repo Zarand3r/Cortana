@@ -22,8 +22,9 @@ desktop = [
     "pyobjc-framework-Vision",
     "pyobjc-framework-Cocoa",
 ]
-# Native Apple-Silicon inference (alternative to Ollama).
-mlx = ["mlx-lm"]
+# Native Apple-Silicon inference (the bundled single-artifact runtime) + the
+# first-run model downloader.
+mlx = ["mlx-lm", "huggingface_hub"]
 # Build a standalone .app bundle (packaging/build_app.py).
 build = ["py2app>=0.28"]
 # Test/dev tooling (hermetic suite + coverage gate).

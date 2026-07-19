@@ -54,13 +54,18 @@ class DesktopController:
                  stop_tracking: Callable[[], None],
                  open_chat: Callable[[], None],
                  close_chat: Callable[[], None],
-                 show_recommendation: Callable[[], None]) -> None:
+                 show_recommendation: Callable[[], None],
+                 tracking_healthy: Callable[[], bool] | None = None) -> None:
         self._start_tracking = start_tracking
         self._stop_tracking = stop_tracking
         self._open_chat = open_chat
         self._close_chat = close_chat
         self._show_recommendation = show_recommendation
+        # Predicate the menu polls to detect a silently-dead tracking thread. Defaults
+        # to "always healthy" so tests/callers that don't wire it keep the old shape.
+        self._tracking_healthy = tracking_healthy or (lambda: True)
         self.active = False
+        self.failed = False        # tracker crashed while we thought it was running
 
     def start(self) -> None:
         """Activate Cortana: begin perception AND open the chat window (idempotent)."""
@@ -68,6 +73,7 @@ class DesktopController:
             self._start_tracking()
             self._open_chat()
             self.active = True
+            self.failed = False    # a fresh start clears any prior crash badge
 
     def stop(self) -> None:
         """Deactivate Cortana: stop perception AND close the chat window (idempotent)."""
@@ -81,12 +87,21 @@ class DesktopController:
 
     def sync(self, *, window_open: bool) -> bool:
         """Reconcile with reality: if we're active but the user closed the chat
-        window, stop everything (window closed ⇒ Cortana off). Returns True when
+        window, stop everything (window closed ⇒ Cortana off); or if the tracking
+        thread has died under us, stop and raise the crash badge. Returns True when
         the state changed (caller refreshes the menu)."""
         if self.active and not window_open:
             self._stop_tracking()
             self._close_chat()      # idempotent — the window is already gone
             self.active = False
+            return True
+        if self.active and not self._tracking_healthy():
+            # The perception loop crashed while the menu still said "on" — never
+            # leave a dead tracker looking alive. Stop cleanly and badge the failure.
+            self._stop_tracking()
+            self._close_chat()
+            self.active = False
+            self.failed = True
             return True
         return False
 
@@ -95,7 +110,9 @@ class DesktopController:
         self._show_recommendation()
 
     def label(self) -> str:
-        """Menu title reflecting the one state."""
+        """Menu title reflecting the one state (incl. a crash badge)."""
+        if self.failed and not self.active:
+            return "⚠️  Cortana stopped (error) — click to restart"
         return "⏸  Stop Cortana" if self.active else "▶  Start Cortana"
 
 
@@ -111,6 +128,12 @@ class _TrackingService:  # pragma: no cover - threads + asyncio + native sensor
         self._task = None
         self._memory = None
         self._prev = None      # a stopping thread that must fully close before a restart
+        self._failed = False   # the run loop crashed (not a clean cancel)
+
+    def healthy(self) -> bool:
+        """False once the run loop has died from an unexpected error — the menu polls
+        this so a crashed tracker never keeps showing 'on'."""
+        return not self._failed
 
     def start(self) -> None:
         import asyncio
@@ -137,11 +160,16 @@ class _TrackingService:  # pragma: no cover - threads + asyncio + native sensor
             self._prev = None
         asyncio.set_event_loop(self._loop)
         agent, self._memory = make_loop(self._cfg, working_memory=self._working)
+        self._failed = False
         self._task = self._loop.create_task(agent.run(install_signal_handlers=False))
         try:
             self._loop.run_until_complete(self._task)
         except asyncio.CancelledError:
             pass
+        except Exception:  # noqa: BLE001 - loop crashed: flag it so the menu can surface it
+            self._failed = True
+            import logging
+            logging.getLogger("cortana.desktop").exception("tracking loop crashed")
         finally:
             self._memory.close()
             self._loop.close()
@@ -220,9 +248,17 @@ class ChatWindowManager:
 
 def _spawn_chat_window(url: str):  # pragma: no cover - native webview subprocess
     """Spawn the chat UI as a subprocess so its pywebview run loop doesn't collide
-    with the menu bar's rumps run loop (both want the main thread — docs/DESKTOP.md)."""
+    with the menu bar's rumps run loop (both want the main thread — docs/DESKTOP.md).
+
+    From source we run ``python -m cortana chat-window``; inside a frozen .app there's
+    no importable ``-m`` target, so we re-exec the app binary with ``CORTANA_CHILD``
+    set and desktop_app.py dispatches it to the window entrypoint."""
+    import os
     import subprocess
     import sys
+    if getattr(sys, "frozen", False):
+        env = dict(os.environ, CORTANA_CHILD="chat-window", CORTANA_CHILD_URL=url)
+        return subprocess.Popen([sys.executable], env=env)
     return subprocess.Popen([sys.executable, "-m", "cortana", "chat-window", "--url", url])
 
 
@@ -248,6 +284,9 @@ def run_app(cfg) -> int:  # pragma: no cover - native menu-bar app (rumps)
 
     from PyObjCTools import AppHelper
 
+    from cortana import runtime
+
+    runtime.apply_production_defaults(cfg)   # frozen .app -> bundled MLX runtime, no Ollama
     backend = make_backend(cfg.backend, cfg)
     read_memory = open_memory(cfg, check_same_thread=False)   # shared read-only recall
     working = WorkingMemory(maxlen=cfg.working_memory_max)    # short-term, shared in-process
@@ -273,14 +312,40 @@ def run_app(cfg) -> int:  # pragma: no cover - native menu-bar app (rumps)
         open_chat=chat_window.open,          # single reused window
         close_chat=chat_window.close,
         show_recommendation=_show_recommendation,
+        tracking_healthy=service.healthy,    # menu surfaces a crashed tracker
     )
+
+    ready = threading.Event()
+
+    def _provision(set_status) -> None:
+        # First-run setup, off the main thread: fetch the model once (the single
+        # network exception the user opted into), then ensure the Screen Recording
+        # grant. When both hold, unblock Start. All steps are idempotent, so this is
+        # a fast no-op on every launch after the first.
+        try:
+            state, msg = runtime.readiness(
+                model_available=runtime.is_model_available(cfg.model),
+                screen_recording=runtime.screen_recording_granted())
+            if state is runtime.RuntimeState.MODEL_MISSING:
+                set_status(msg)
+                runtime.ensure_model(cfg.model, progress=set_status)
+            if not runtime.screen_recording_granted():
+                set_status("Grant Screen Recording to start…")
+                runtime.request_screen_recording()
+            ready.set()
+            set_status("Cortana is ready.")
+        except Exception as exc:  # noqa: BLE001 - setup failure must be visible, not silent
+            set_status(f"Setup failed: {exc}")
 
     class CortanaApp(rumps.App):
         def __init__(self):
             super().__init__("Cortana", quit_button=None)   # own quit for a clean drain
             self.toggle_item = rumps.MenuItem(controller.label(), callback=self._toggle)
+            self.status_item = rumps.MenuItem("Starting…")   # first-run progress line
+            self.status_item.set_callback(None)              # non-clickable status
             self.menu = [
                 self.toggle_item,
+                self.status_item,
                 rumps.MenuItem("Get Recommendation", callback=self._recommend),
                 None,
                 rumps.MenuItem("Quit Cortana", callback=self._quit),
@@ -289,8 +354,19 @@ def run_app(cfg) -> int:  # pragma: no cover - native menu-bar app (rumps)
             # off (tracking stops too — never a mixed state).
             self._watcher = rumps.Timer(self._sync, 2)
             self._watcher.start()
+            # Provision the model + permission in the background; the menu stays live.
+            def set_status(text):
+                AppHelper.callAfter(lambda: setattr(self.status_item, "title", text))
+            threading.Thread(target=_provision, args=(set_status,),
+                             name="cortana-provision", daemon=True).start()
 
         def _toggle(self, _):
+            if not controller.active and not ready.is_set():
+                # Not set up yet — don't start a tracker with no model/permission.
+                rumps.alert(title="Cortana",
+                            message="Still getting ready (model download / Screen "
+                                    "Recording permission). Check the status line.")
+                return
             controller.toggle()
             self.toggle_item.title = controller.label()
 
