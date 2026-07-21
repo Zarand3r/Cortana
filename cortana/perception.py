@@ -56,10 +56,25 @@ _VOLATILE_RE = re.compile(
 )
 
 
+# Volatile tokens specific to WINDOW TITLES: unread counters ("(3) Slack",
+# "Inbox (2,431)"), progress percentages ("npm build — 42%"), and Braille spinner
+# glyphs. A title flipping every second would otherwise defeat change detection at
+# 1s cadence — a stored row + a share of an LLM call per flip on an idle screen.
+# Applied to the title only: stripping "(3)" from OCR *content* could mask real
+# document changes.
+_VOLATILE_TITLE_RE = re.compile(
+    r"\(\d[\d,.]*\)"          # parenthesized unread/notification counts
+    r"|\b\d{1,3}\s?%"         # progress percentages
+    r"|[⠀-⣿]"       # Braille spinner animation frames
+)
+
+
 def normalize(app_name: str, window_title: str, ocr_text: str) -> str:
     """Canonicalize a perception for change detection: lowercase, strip volatile
-    clock/date tokens, collapse whitespace."""
-    raw = f"{app_name}\n{window_title}\n{ocr_text}".lower()
+    clock/date tokens (everywhere) and counters/spinners (title only), collapse
+    whitespace."""
+    title = _VOLATILE_TITLE_RE.sub(" ", window_title)
+    raw = f"{app_name}\n{title}\n{ocr_text}".lower()
     raw = _VOLATILE_RE.sub(" ", raw)
     return _WHITESPACE_RE.sub(" ", raw).strip()
 

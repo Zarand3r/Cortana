@@ -31,6 +31,21 @@ def test_screen_sensor_window_title_blank_when_unavailable(monkeypatch):
     assert obs.window_title == ""                        # no title -> empty, not a crash
 
 
+def test_volatile_title_tokens_do_not_flip_change_detection():
+    # Unread counters / progress % / spinner frames in a TITLE change every second
+    # while content is static — they must not defeat compaction (a row + LLM share
+    # per second on an idle screen). OCR *content* keeps its counts (a real change).
+    from cortana.perception import content_hash
+    a = content_hash("Slack", "(3) Slack — #general", "static body")
+    b = content_hash("Slack", "(4) Slack — #general", "static body")
+    assert a == b                                      # count flip: NOT a change
+    c = content_hash("Term", "⠧ build — 42%", "static body")
+    d = content_hash("Term", "⠇ build — 43%", "static body")
+    assert c == d                                      # spinner/percent: NOT a change
+    e = content_hash("Slack", "(3) Slack — #general", "someone posted a message")
+    assert e != a                                      # real content change still fires
+
+
 def test_screen_sensor_window_title_flows_into_change_detection(monkeypatch):
     # window_title feeds content_hash, so two identical screens with *different*
     # titles must be seen as different content (a real regression the empty-title

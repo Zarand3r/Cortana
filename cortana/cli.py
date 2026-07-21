@@ -128,14 +128,27 @@ def open_memory(cfg: Config, *, check_same_thread: bool = True) -> Memory:
     )
 
 
-def make_loop(cfg: Config, *, sensor=None,
-              working_memory=None) -> tuple[AgentLoop, Memory]:
+def make_loop(cfg: Config, *, sensor=None, working_memory=None,
+              backend=None) -> tuple[AgentLoop, Memory]:
     """Wire Memory + backend + AgentLoop from a Config. ``sensor`` overrides the
     live native sensor; ``working_memory`` injects a shared short-term buffer so
-    readers (chat/recommend) can see the loop's recent activity."""
+    readers (chat/recommend) can see the loop's recent activity; ``backend`` shares
+    an existing backend (the desktop passes its chat backend so one resident MLX
+    model serves everything) instead of constructing a second one."""
     memory = open_memory(cfg, check_same_thread=False)   # writes funnel through the db executor
-    backend = make_backend(cfg.backend, cfg)
-    embedder = make_embedder("ollama", cfg) if cfg.embed else None   # semantic index on write
+    if backend is None:
+        backend = make_backend(cfg.backend, cfg)
+    embedder = None
+    if cfg.embed:
+        # Embeddings are served by Ollama only. With another backend there is no
+        # local embedding server: say so loudly instead of storing vector-less rows
+        # while the user believes semantic recall is on.
+        if cfg.backend != "ollama":
+            logging.getLogger("cortana.cli").warning(
+                "embed=true needs the Ollama backend for embeddings (backend=%s); "
+                "semantic indexing is DISABLED — recall stays keyword-only", cfg.backend)
+        else:
+            embedder = make_embedder("ollama", cfg)      # semantic index on write
     return (AgentLoop(cfg, memory, backend, sensor,
                       working_memory=working_memory, embedder=embedder), memory)
 

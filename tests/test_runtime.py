@@ -97,3 +97,13 @@ def test_frozen_bundle_keeps_custom_model(monkeypatch):
     runtime.apply_production_defaults(cfg)
     assert cfg.backend == "mlx"                        # backend still upgraded to bundled runtime
     assert cfg.model == "mlx-community/Custom-3B"      # but their model choice is preserved
+
+
+def test_explicit_mlx_backend_gets_mlx_model_even_from_source(monkeypatch):
+    # backend="mlx" with the untouched OLLAMA default tag is a config hole: an
+    # Ollama tag is not a valid HF repo id, so mlx_lm.load would fail at first use.
+    monkeypatch.setattr(runtime, "is_frozen", lambda: False)
+    cfg = Config()
+    cfg.backend = "mlx"                                # user chose mlx, left model default
+    runtime.apply_production_defaults(cfg)
+    assert cfg.model == runtime.DEFAULT_MLX_MODEL      # swapped to a loadable repo id

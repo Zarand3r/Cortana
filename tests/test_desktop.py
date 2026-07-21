@@ -117,6 +117,30 @@ def test_sync_healthy_tracker_is_left_running():
     assert ctl.active is True and ctl.failed is False
 
 
+def test_sync_window_close_after_crash_keeps_the_badge():
+    # Tracker dies AND the user closes the window: the window-close branch runs
+    # first, but the crash must not be swallowed — the badge explains the state.
+    healthy = {"ok": True}
+    ctl = DesktopController(
+        start_tracking=lambda: None, stop_tracking=lambda: None,
+        open_chat=lambda: None, close_chat=lambda: None,
+        show_recommendation=lambda: None,
+        tracking_healthy=lambda: healthy["ok"],
+    )
+    ctl.start()
+    healthy["ok"] = False                         # crash…
+    assert ctl.sync(window_open=False) is True    # …then window closed
+    assert ctl.failed is True                     # badge survives the close path
+    assert "error" in ctl.label().lower()
+
+
+def test_sync_clean_window_close_shows_no_badge():
+    ctl, _ = _controller()
+    ctl.start()
+    assert ctl.sync(window_open=False) is True    # healthy tracker, clean close
+    assert ctl.failed is False                    # no spurious crash badge
+
+
 def test_recommend_invokes_callable():
     ctl, calls = _controller()
     ctl.recommend()

@@ -22,7 +22,7 @@ export NOTARY_PROFILE="cortana-notary"   # see the script header for store-crede
 ```
 
 The script: clean venv → `pip install '.[desktop,mlx,build]'` → py2app → `codesign`
-(hardened runtime + `packaging/entitlements.plist`) → `create-dmg` → `notarytool
+(hardened runtime + `bundle/entitlements.plist`) → `create-dmg` → `notarytool
 submit --wait` → `stapler staple`. Without `SIGN_ID`/`NOTARY_PROFILE` it stops early
 with an unsigned/un-notarized bundle (fine for local use).
 

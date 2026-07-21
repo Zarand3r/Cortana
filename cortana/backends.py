@@ -154,36 +154,58 @@ class OllamaBackend(LLMBackend):
 
 
 class MLXBackend(LLMBackend):  # pragma: no cover - requires mlx-lm + a resident model
-    """Native Apple-Silicon inference via mlx-lm. The loaded model stays resident in
-    RAM as ``_model``; ``model`` remains the identifier string (the contract).
-    Imported lazily so this module loads without mlx-lm installed."""
+    """Native Apple-Silicon inference via mlx-lm.
+
+    **Lazy**: construction is cheap — the model loads (and, if uncached, downloads)
+    on FIRST use, never in ``__init__``. The desktop app constructs backends at
+    launch, before the first-run provisioning UI exists; an eager load here would
+    block the launch for minutes with no visible feedback (or die offline).
+
+    **Serialized**: one resident model is shared by the tracker, chat, recommend,
+    and consolidation threads; concurrent mlx-lm generation on one model is not
+    thread-safe, so every call holds ``_lock``."""
 
     def __init__(self, *, model: str) -> None:
-        from mlx_lm import generate, load  # lazy
+        import threading
 
-        self._generate = generate
         self.model = model                      # identifier string (contract)
-        self._model, self.tokenizer = load(model)
+        self._lock = threading.Lock()
+        self._model = None                      # loaded on first use
+        self.tokenizer = None
+
+    def _ensure_loaded(self) -> None:
+        """Load the model once (caller holds ``_lock``)."""
+        if self._model is None:
+            from mlx_lm import load  # lazy: keep this module importable without mlx-lm
+            self._model, self.tokenizer = load(self.model)
 
     def generate(self, prompt: str) -> str:
-        messages = [{"role": "user", "content": prompt}]
-        text = self.tokenizer.apply_chat_template(
-            messages, add_generation_prompt=True, tokenize=False
-        )
-        return self._generate(
-            self._model, self.tokenizer, prompt=text, max_tokens=128, verbose=False
-        ).strip()
+        from mlx_lm import generate  # lazy
+
+        with self._lock:
+            self._ensure_loaded()
+            messages = [{"role": "user", "content": prompt}]
+            text = self.tokenizer.apply_chat_template(
+                messages, add_generation_prompt=True, tokenize=False
+            )
+            return generate(
+                self._model, self.tokenizer, prompt=text, max_tokens=128, verbose=False
+            ).strip()
 
     def chat(self, messages: Iterable[Message]) -> Iterator[str]:
-        from mlx_lm import stream_generate  # lazy: keep this module importable without mlx-lm
+        from mlx_lm import stream_generate  # lazy
 
-        text = self.tokenizer.apply_chat_template(
-            [m.to_wire() for m in messages], add_generation_prompt=True, tokenize=False
-        )
-        for response in stream_generate(
-            self._model, self.tokenizer, prompt=text, max_tokens=1024
-        ):
-            yield response.text
+        # The lock is held for the whole stream: a tracker summarization arriving
+        # mid-chat waits (bounded by one reply) instead of corrupting shared state.
+        with self._lock:
+            self._ensure_loaded()
+            text = self.tokenizer.apply_chat_template(
+                [m.to_wire() for m in messages], add_generation_prompt=True, tokenize=False
+            )
+            for response in stream_generate(
+                self._model, self.tokenizer, prompt=text, max_tokens=1024
+            ):
+                yield response.text
 
 
 def make_backend(name: str | Backend, cfg: Config | None = None) -> LLMBackend:

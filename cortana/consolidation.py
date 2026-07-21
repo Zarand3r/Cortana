@@ -39,16 +39,11 @@ def build_digest_prompt(memories: list[dict]) -> str:
     return "\n".join(parts)
 
 
-def consolidate(memory: Memory, backend: LLMBackend, *, since: str | None = None,
-                until: str | None = None, limit: int = 200) -> Reflection:
-    """Summarize recent episodes into a reflection and persist it. Returns the
-    Reflection (``basis_count == 0`` and nothing stored when there's no activity)."""
-    memories = memory.recall(since=since, until=until, limit=limit)
-    if not memories:
-        return Reflection(text="", period_start=since or "", period_end=until or "",
-                          basis_count=0)
-    # recall is newest-first, so period spans oldest..newest of the window
-    period_start = memories[-1]["ts"]
+def prepare_digest(memories: list[dict]) -> tuple[list[dict], str, str]:
+    """Turn newest-first recall rows into a chronological, summary-deduped log plus
+    the period bounds. Pure — shared by the sync CLI path and the agent loop's
+    executor-split path (recall on db thread, generate on llm thread)."""
+    period_start = memories[-1]["ts"]                 # recall is newest-first
     period_end = memories[0]["ts"]
     # feed the LLM a chronological log, and don't repeat a batch summary for every
     # event in the batch — one entry per distinct summary (or raw OCR row).
@@ -61,6 +56,18 @@ def consolidate(memory: Memory, backend: LLMBackend, *, since: str | None = None
                 continue
             seen_summaries.add(sid)
         log_rows.append(m)
+    return log_rows, period_start, period_end
+
+
+def consolidate(memory: Memory, backend: LLMBackend, *, since: str | None = None,
+                until: str | None = None, limit: int = 200) -> Reflection:
+    """Summarize recent episodes into a reflection and persist it. Returns the
+    Reflection (``basis_count == 0`` and nothing stored when there's no activity)."""
+    memories = memory.recall(since=since, until=until, limit=limit)
+    if not memories:
+        return Reflection(text="", period_start=since or "", period_end=until or "",
+                          basis_count=0)
+    log_rows, period_start, period_end = prepare_digest(memories)
     text = backend.generate(build_digest_prompt(log_rows)).strip()
     memory.add_reflection(period_start, period_end, text)
     return Reflection(text=text, period_start=period_start, period_end=period_end,

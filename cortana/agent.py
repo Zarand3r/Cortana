@@ -12,7 +12,7 @@ import contextlib
 import logging
 import signal
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from enum import Enum, auto
 
 from cortana.backends import LLMBackend
@@ -78,11 +78,27 @@ class _AsyncMemory:
     async def prune(self):
         return await self._loop.run_in_executor(self._ex, self._m.prune)
 
-    async def consolidate(self, backend):
-        """Run a consolidation pass (recall recent episodes -> reflection) on the db
-        executor, keeping it serial with writes (single-writer discipline)."""
-        from cortana.consolidation import consolidate
-        return await self._loop.run_in_executor(self._ex, consolidate, self._m, backend)
+    async def last_reflection(self):
+        rows = await self._loop.run_in_executor(self._ex, self._m.recent_reflections, 1)
+        return rows[0] if rows else None
+
+    async def consolidate(self, backend, llm_pool, since=None):
+        """Consolidate recent episodes into a reflection, with each stage on the
+        RIGHT executor: recall + write on the db thread (single-writer discipline),
+        but the LLM generate on the llm thread — a multi-second/minute generate on
+        the db executor would stall every write, including backpressure persistence,
+        halting capture for its whole duration."""
+        from cortana.consolidation import build_digest_prompt, prepare_digest
+        memories = await self._loop.run_in_executor(
+            self._ex, lambda: self._m.recall(since=since, limit=200))
+        if not memories:
+            return None
+        log_rows, period_start, period_end = prepare_digest(memories)
+        text = await self._loop.run_in_executor(
+            llm_pool, lambda: backend.generate(build_digest_prompt(log_rows)).strip())
+        await self._loop.run_in_executor(
+            self._ex, self._m.add_reflection, period_start, period_end, text)
+        return text
 
 
 class AgentLoop:
@@ -131,7 +147,7 @@ class AgentLoop:
             await amem.prune()                 # bound memory before we start growing it
             prod = asyncio.create_task(self._producer(queue, stop, loop, capture_pool, amem, max_ticks))
             cons = asyncio.create_task(self._consumer(queue, stop, loop, llm_pool, amem))
-            maint = asyncio.create_task(self._maintenance(stop, amem))
+            maint = asyncio.create_task(self._maintenance(stop, amem, llm_pool))
             tasks = [prod, cons, maint]
 
             await prod                          # ends on max_ticks (tests) or stop (signal)
@@ -260,19 +276,33 @@ class AgentLoop:
                 break
         return batch
 
-    async def _maintenance(self, stop, amem) -> None:  # pragma: no cover - daemon-cadence (10min/24h)
-        """Long-run upkeep: log a metrics summary periodically and re-prune daily.
-        Cadences are far longer than any hermetic test, so this is daemon-only."""
+    async def _consolidate_if_due(self, amem, llm_pool) -> None:
+        """Consolidate when the newest reflection is older than a day (or none
+        exists) — WALL-CLOCK, not process uptime: a menu-bar app quit daily would
+        never accrue 24h of uptime, and monotonic timers pause during macOS sleep,
+        so an uptime counter meant reflections never happened in production. The
+        since-bound starts after the last consolidated period, so each pass digests
+        only new episodes."""
+        last = await amem.last_reflection()
+        since = None
+        if last is not None:
+            age = datetime.now(timezone.utc) - datetime.fromisoformat(last["created_at"])
+            if age < timedelta(hours=24):
+                return
+            since = last["period_end"]
+        try:
+            await amem.consolidate(self._backend, llm_pool, since=since)
+        except Exception as exc:  # noqa: BLE001 - never let upkeep kill the loop
+            log.warning("scheduled consolidation failed: %s", exc)
+
+    async def _maintenance(self, stop, amem, llm_pool) -> None:  # pragma: no cover - daemon cadence
+        """Long-run upkeep every 10 min: metrics summary, daily prune (uptime-based
+        is fine — pruning again early is harmless), and due-based consolidation."""
         elapsed = 0.0
         while not await self._sleep_or_stop(stop, _METRICS_LOG_INTERVAL):
             log.info("cortana metrics: %s", self.metrics.render())
+            await self._consolidate_if_due(amem, llm_pool)
             elapsed += _METRICS_LOG_INTERVAL
             if elapsed >= _PRUNE_INTERVAL:
                 elapsed = 0.0
                 await amem.prune()
-                # Consolidate the day's episodes into a durable reflection so the
-                # semantic tier accrues automatically (no manual `cortana digest`).
-                try:
-                    await amem.consolidate(self._backend)
-                except Exception as exc:  # noqa: BLE001 - never let upkeep kill the loop
-                    log.warning("scheduled consolidation failed: %s", exc)

@@ -69,7 +69,7 @@ Cortana is a normal Python package, so there are three ways to hand it off:
 
 # 3. Build a double-clickable macOS .app (needs signing to distribute widely):
 ./.venv/bin/pip install '.[build]'
-./.venv/bin/python packaging/build_app.py py2app               # -> dist/Cortana.app
+./.venv/bin/python bundle/build_app.py py2app               # -> dist/Cortana.app
 ```
 
 Signing/notarization (so the Screen Recording grant persists on other Macs) is in

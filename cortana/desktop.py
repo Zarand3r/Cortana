@@ -94,6 +94,9 @@ class DesktopController:
             self._stop_tracking()
             self._close_chat()      # idempotent — the window is already gone
             self.active = False
+            # If the tracker had ALSO died, the crash must not be swallowed by the
+            # window-close path — the badge tells the user why "off" wasn't clean.
+            self.failed = not self._tracking_healthy()
             return True
         if self.active and not self._tracking_healthy():
             # The perception loop crashed while the menu still said "on" — never
@@ -120,9 +123,10 @@ class _TrackingService:  # pragma: no cover - threads + asyncio + native sensor
     """Runs the perception AgentLoop on a private asyncio event loop in a daemon
     thread; ``stop`` cancels it (AgentLoop.run drains + closes in its finally)."""
 
-    def __init__(self, cfg, working_memory=None) -> None:
+    def __init__(self, cfg, working_memory=None, backend=None) -> None:
         self._cfg = cfg
         self._working = working_memory
+        self._backend = backend    # SHARED with chat/recommend: one resident model
         self._thread = None
         self._loop = None
         self._task = None
@@ -140,39 +144,49 @@ class _TrackingService:  # pragma: no cover - threads + asyncio + native sensor
         import threading
         if self._thread and self._thread.is_alive():
             return                                  # already running — don't spawn a 2nd writer
+        # Reset the crash flag SYNCHRONOUSLY, before the thread exists: the 2s menu
+        # sync polls healthy(), and a stale True-failure from the last session would
+        # kill this fresh session while it's still loading the model.
+        self._failed = False
         # Create the loop synchronously BEFORE the thread starts, so a stop() that
         # arrives before _run has run can still schedule cancellation onto it
         # (fixes the start/stop race that could leave a zombie loop + 2nd SQLite writer).
         self._loop = asyncio.new_event_loop()
-        self._thread = threading.Thread(target=self._run, name="cortana-track",
-                                        daemon=True)
+        self._thread = threading.Thread(target=self._run, args=(self._loop,),
+                                        name="cortana-track", daemon=True)
         self._thread.start()
 
-    def _run(self) -> None:
+    def _run(self, loop) -> None:
+        # ``loop`` is passed by value: stop() nulls self._loop, and this thread must
+        # keep operating on ITS loop regardless of menu-side state changes.
         import asyncio
+        import logging
 
         from cortana.cli import make_loop
-        # If a previous session is still draining/closing its writer, wait for it HERE
-        # (on this background thread, never the menu thread) so we never open a second
-        # SQLite writer — restart is safe without blocking the UI.
-        if self._prev is not None:
-            self._prev.join()
-            self._prev = None
-        asyncio.set_event_loop(self._loop)
-        agent, self._memory = make_loop(self._cfg, working_memory=self._working)
-        self._failed = False
-        self._task = self._loop.create_task(agent.run(install_signal_handlers=False))
         try:
-            self._loop.run_until_complete(self._task)
+            # If a previous session is still draining/closing its writer, wait HERE
+            # (on this background thread, never the menu thread) so we never open a
+            # second SQLite writer — restart is safe without blocking the UI.
+            if self._prev is not None:
+                self._prev.join()
+                self._prev = None
+            asyncio.set_event_loop(loop)
+            # make_loop is INSIDE the try: a startup failure (model missing, DB
+            # locked/corrupt) must flip the crash badge, not die silently.
+            agent, self._memory = make_loop(self._cfg, working_memory=self._working,
+                                            backend=self._backend)
+            self._task = loop.create_task(agent.run(install_signal_handlers=False))
+            loop.run_until_complete(self._task)
         except asyncio.CancelledError:
             pass
         except Exception:  # noqa: BLE001 - loop crashed: flag it so the menu can surface it
             self._failed = True
-            import logging
             logging.getLogger("cortana.desktop").exception("tracking loop crashed")
         finally:
-            self._memory.close()
-            self._loop.close()
+            if self._memory is not None:
+                self._memory.close()
+                self._memory = None
+            loop.close()
 
     def _cancel(self) -> None:
         if self._task and not self._task.done():
@@ -185,8 +199,12 @@ class _TrackingService:  # pragma: no cover - threads + asyncio + native sensor
         # that must guarantee the drain finished (quit) call join() — off the menu
         # thread, so stopping never beachballs the menu bar (the join could take
         # several seconds if an LLM call is mid-flight).
-        if self._loop:
-            self._loop.call_soon_threadsafe(self._cancel)
+        loop = self._loop
+        if loop is not None:
+            try:
+                loop.call_soon_threadsafe(self._cancel)
+            except RuntimeError:
+                pass    # loop already closed (tracker crashed/finished) — nothing to cancel
         # Hand the draining thread to _prev so a restart waits for it, not the caller.
         if self._thread is not None:
             self._prev, self._thread, self._loop = self._thread, None, None
@@ -250,16 +268,20 @@ def _spawn_chat_window(url: str):  # pragma: no cover - native webview subproces
     """Spawn the chat UI as a subprocess so its pywebview run loop doesn't collide
     with the menu bar's rumps run loop (both want the main thread — docs/DESKTOP.md).
 
-    From source we run ``python -m cortana chat-window``; inside a frozen .app there's
-    no importable ``-m`` target, so we re-exec the app binary with ``CORTANA_CHILD``
-    set and desktop_app.py dispatches it to the window entrypoint."""
+    Frozen-app note: in a py2app bundle ``sys.executable`` is the bundled plain
+    interpreter (``Contents/MacOS/python`` — py2app's launcher sets it via
+    CFBundleCopyAuxiliaryExecutableURL), NOT the app binary. That interpreter does
+    not inherit the bundle's module paths, so we hand it this process's ``sys.path``
+    via PYTHONPATH; then the ordinary ``-m cortana chat-window`` entry works in both
+    frozen and source modes — one code path, no re-exec tricks."""
     import os
     import subprocess
     import sys
+    env = dict(os.environ)
     if getattr(sys, "frozen", False):
-        env = dict(os.environ, CORTANA_CHILD="chat-window", CORTANA_CHILD_URL=url)
-        return subprocess.Popen([sys.executable], env=env)
-    return subprocess.Popen([sys.executable, "-m", "cortana", "chat-window", "--url", url])
+        env["PYTHONPATH"] = os.pathsep.join(p for p in sys.path if p)
+    return subprocess.Popen([sys.executable, "-m", "cortana", "chat-window", "--url", url],
+                            env=env)
 
 
 def run_chat_window(url: str) -> None:  # pragma: no cover - native webview
@@ -287,11 +309,16 @@ def run_app(cfg) -> int:  # pragma: no cover - native menu-bar app (rumps)
     from cortana import runtime
 
     runtime.apply_production_defaults(cfg)   # frozen .app -> bundled MLX runtime, no Ollama
+    # Cheap constructor: MLXBackend is lazy (model loads on first USE, after the
+    # provisioning gate below) — an eager load here would block the launch for the
+    # whole first-run download with no menu icon and no status line.
     backend = make_backend(cfg.backend, cfg)
     read_memory = open_memory(cfg, check_same_thread=False)   # shared read-only recall
     working = WorkingMemory(maxlen=cfg.working_memory_max)    # short-term, shared in-process
     _serve_chat_background(cfg, backend, read_memory, working)  # chat sees the live view
-    service = _TrackingService(cfg, working_memory=working)   # the tracker fills it
+    # ONE shared backend across tracker/chat/recommend: one resident model (a second
+    # copy would double RAM ~4 GB and pay a full reload on every Start).
+    service = _TrackingService(cfg, working_memory=working, backend=backend)
     url = f"http://{cfg.chat_host}:{cfg.chat_port}"
     chat_window = ChatWindowManager(lambda: _spawn_chat_window(url))
 
@@ -320,22 +347,32 @@ def run_app(cfg) -> int:  # pragma: no cover - native menu-bar app (rumps)
     def _provision(set_status) -> None:
         # First-run setup, off the main thread: fetch the model once (the single
         # network exception the user opted into), then ensure the Screen Recording
-        # grant. When both hold, unblock Start. All steps are idempotent, so this is
-        # a fast no-op on every launch after the first.
+        # grant. Start stays gated until BOTH hold. Idempotent — a fast no-op on
+        # every launch after the first.
         try:
-            state, msg = runtime.readiness(
-                model_available=runtime.is_model_available(cfg.model),
-                screen_recording=runtime.screen_recording_granted())
-            if state is runtime.RuntimeState.MODEL_MISSING:
-                set_status(msg)
-                runtime.ensure_model(cfg.model, progress=set_status)
+            # Model provisioning applies only to the bundled MLX runtime. Ollama
+            # models are managed by the Ollama server (an Ollama tag is not an HF
+            # repo id — checking/downloading it against the HF cache is meaningless
+            # and would brick Start for every source run). Fake needs nothing.
+            if cfg.backend == "mlx":
+                if not runtime.is_model_available(cfg.model):
+                    _, msg = runtime.readiness(model_available=False,
+                                               screen_recording=True)
+                    set_status(msg)
+                    runtime.ensure_model(cfg.model, progress=set_status)
             if not runtime.screen_recording_granted():
                 set_status("Grant Screen Recording to start…")
                 runtime.request_screen_recording()
+                if not runtime.screen_recording_granted():
+                    # macOS applies a fresh Screen Recording grant only on relaunch;
+                    # do NOT set ready — tracking now would record nothing, silently.
+                    set_status("Grant Screen Recording in System Settings, then "
+                               "relaunch Cortana.")
+                    return
             ready.set()
             set_status("Cortana is ready.")
         except Exception as exc:  # noqa: BLE001 - setup failure must be visible, not silent
-            set_status(f"Setup failed: {exc}")
+            set_status(f"Setup failed: {exc} — relaunch Cortana to retry.")
 
     class CortanaApp(rumps.App):
         def __init__(self):

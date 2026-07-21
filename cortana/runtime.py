@@ -38,15 +38,17 @@ def is_frozen() -> bool:
 
 
 def apply_production_defaults(cfg) -> None:
-    """In a frozen .app, default to the bundled MLX runtime so there's no external
-    Ollama dependency — but only when the user hasn't chosen a backend themselves.
-    A no-op when running from source (dev keeps the Ollama default)."""
-    if not is_frozen():
-        return
-    if cfg.backend == "ollama":                      # untouched dev default -> bundle default
+    """Reconcile config with the runtime actually in use.
+
+    * Frozen .app: default to the bundled MLX runtime (no external Ollama) unless
+      the user chose a backend themselves. No-op from source (dev keeps Ollama).
+    * Any mode: ``backend = "mlx"`` with the *Ollama* default model tag is a
+      config hole (an Ollama tag is not a valid HF repo id — ``mlx_lm.load``
+      would fail); swap in the MLX default model so the combination works."""
+    if is_frozen() and cfg.backend == "ollama":      # untouched dev default -> bundle default
         cfg.backend = "mlx"
-        if cfg.model == _DEFAULT_OLLAMA_MODEL:
-            cfg.model = DEFAULT_MLX_MODEL
+    if cfg.backend == "mlx" and cfg.model == _DEFAULT_OLLAMA_MODEL:
+        cfg.model = DEFAULT_MLX_MODEL
 
 
 def hf_cache_dir() -> Path:

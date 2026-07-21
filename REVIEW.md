@@ -92,6 +92,66 @@ real, patched + regression-tested; the rest rejected (see §2b).
   idempotency, consolidation ordering, `WorkingMemory` locking, restart reusing a
   closed loop (Start assigns a fresh loop).
 
+## 1c. Third review pass (2026-07-21) — production/packaging branch
+
+Scope: everything on `feat/production-single-artifact` (PR #8) — the first-run
+runtime, desktop lifecycle changes, window-title sensor fix, auto-consolidation,
+and the entire py2app/sign/notarize pipeline. Method as before: two fresh-context
+adversarial reviewers (product code; packaging/build — the latter verified its
+claims *empirically*: a live `codesign --deep` experiment, `otool` sweeps of the
+built bundle, py2app source reading), plus build-pipeline findings from actually
+running the build. Every finding verified against source before fixing.
+
+### Fixed — product code (all regression-tested where testable)
+| # | Sev | Finding | Fix |
+|---|---|---|---|
+| 21 | **P0** | **Eager MLX load defeated the whole first-run flow.** `MLXBackend.__init__` called `mlx_lm.load()`; `run_app` constructs the backend before the menu exists → first launch = a silent multi-minute download with no UI (or a dead app offline). The provisioning state machine never got to run. | `MLXBackend` is now lazy (loads on first use, after the ready-gate) and **serialized** (an internal lock — mlx-lm is not thread-safe across tracker/chat/consolidation). |
+| 22 | **P0** | **`stop()` after a tracker crash raised `RuntimeError: Event loop is closed`** — the crash badge never appeared, the menu wedged "on", and Quit stopped working (shutdown thread died on the same raise). | `stop()` guards `call_soon_threadsafe` against a closed loop. |
+| 23 | **P0** | **A startup crash was never flagged**: `make_loop` ran *outside* `_run`'s try, so a model/DB failure killed the thread silently with `healthy()` still True — the exact case the health predicate was built for. | Whole `_run` body inside try/except; memory close guarded. |
+| 24 | **P1** | **Stale `_failed` killed fresh restarts**: reset happened inside `_run` *after* the multi-second model load; the 2s menu sync saw the old crash flag and stopped the new session. Restart-after-crash could never succeed under MLX. | `_failed` reset synchronously in `start()`. Also (P2) `stop()` nulling `self._loop` mid-startup could crash `_run`: the loop is now passed to the thread by value. |
+| 25 | **P1** | **Source runs were bricked by provisioning**: `_provision` HF-cache-checked the *Ollama* tag, then `snapshot_download("qwen2.5:7b-instruct")` → `HFValidationError` (or ImportError) → "Setup failed", Start gated forever — with Ollama running fine. | Model provisioning now applies only to `backend == "mlx"`. |
+| 26 | **P1** | **Denied Screen Recording still reported "Cortana is ready"** — tracking then recorded nothing, silently (every capture `captured=False`). | Grant re-checked after the request; if absent, ready is NOT set and the status says grant + relaunch (macOS applies the grant on relaunch). |
+| 27 | **P1** | **Consolidation ran the LLM generate on the db executor** — a minutes-long generate stalls every write, including backpressure persistence: capture halts. | `_AsyncMemory.consolidate` splits stages: recall/write on the db pool, generate on the llm pool. Thread-asserting regression test. |
+| 28 | **P1** | **Consolidation effectively never ran in production**: it required 24h of *continuous uptime* (reset each launch; monotonic clocks pause in macOS sleep), and the shipped .app has no CLI for manual `digest`. Reflections were a dead feature. Also re-digested the same newest-200 rows. | Wall-clock due-check every 10 min (newest reflection > 24h old → run), `since`-bounded to episodes after the last consolidated period. Tested (due / not-due / bounded). |
+| 29 | **P1** | **Two resident 7B models** (~2×4 GB): `run_app` and every `service.start` each built their own `MLXBackend`. | One shared backend: `make_loop(backend=…)`; the tracker reuses the chat/recommend instance. Tested. |
+| 30 | **P2** | **Volatile window titles defeated compaction**: "(3) Slack", "42%", spinner glyphs flip every second → a stored row + LLM-call share per second on an idle screen (the exact churn change-detection exists to prevent). | `_VOLATILE_TITLE_RE` strips counters/percentages/Braille-spinner frames from the *title only* (OCR content keeps its numbers). Tested. |
+| 31 | **P2** | **`embed = true` off-Ollama silently no-oped** (frozen MLX app has no Ollama; every embed ECONNREFUSED'd into a log nobody sees; hybrid recall quietly became keyword-only). | `make_loop` disables embeddings loudly (WARNING log) when `backend != "ollama"`. Tested. |
+| 32 | **P2** | Crash badge swallowed when the user closed the window *after* a crash (window-close branch ran first and cleared nothing). | Window-close branch now sets `failed = not healthy()`. Tested both ways. |
+| 33 | **P2** | `backend = "mlx"` + default (Ollama) model tag = invalid HF repo id → crash at first use. | `apply_production_defaults` swaps in the MLX default model for that combination, frozen or source. Tested. |
+
+### Fixed — packaging/build pipeline
+| # | Sev | Finding | Fix |
+|---|---|---|---|
+| 34 | **P0** | **`codesign --deep` does not sign Mach-Os under `Resources/`** (verified empirically) — py2app puts the entire Python runtime there; notarization would reject every unsigned `.so`/`.dylib`. The pipeline could never produce its own deliverable. | Inside-out signing: every nested `.so`/`.dylib`, then frameworks, then executables (entitlements on executables only), then the bundle. |
+| 35 | **P0** | **The frozen chat window could never open**: in a py2app bundle `sys.executable` is the bundled *plain interpreter* (`Contents/MacOS/python`), so the old spawn ran a bare REPL that exited instantly → the 2s sync saw "window closed" and stopped tracking. The app could not stay on. | One spawn path for frozen+source: `-m cortana chat-window` with the parent's `sys.path` exported via `PYTHONPATH` when frozen. Dead `CORTANA_CHILD=chat-window` re-exec branch removed. |
+| 36 | **P0** | **py2app cannot freeze `mlx`** (PEP 420 namespace pkg): `packages` crashes its finder; `includes` synthesized a *regular* `mlx` in `python314.zip` that shadowed the filesystem portion → `mlx._reprlib_fix` missing → the .app died at boot (and the self-check step hung the pipeline on py2app's GUI error alert). | `excludes=["mlx"]` + the release script rsyncs the complete wheel package (all submodules + `lib/` dylibs + metallib) into `lib-dynload/mlx`; self-check wrapped in a 180s timeout so a boot failure can never hang the build again. |
+| 37 | **P0** | **`rm -rf dist` deleted the tracked LaunchAgent plist** (`dist/com.cortana.tracker.plist`) that `install.sh` templates from — one `git add -A` away from repo damage. | Plist moved to `launchd/`; `install.sh` updated; `dist/`, `build/`, `.venv-build/` gitignored (the 486 MB bundle is no longer stageable). |
+| 38 | **P1** | **The `.app` inside the DMG was never stapled** (only the DMG was) — a dragged-out app can't verify offline on first launch. | Notarize + staple the `.app` (via zip) first, then build/notarize/staple the DMG. |
+| 39 | **P1** | **Fully floating deps**: a rebuild months later would ship a different, untested inference stack (and the import-only self-check wouldn't catch a generate-API break). | `bundle/constraints.txt` pinned from the tested venv; the script refuses to call an unpinned build shippable. |
+| 40 | **P2** | `disable-library-validation` entitlement was load-bearing cover for the unsigned-dylib problem — a dylib-hijack surface on an app holding a Screen Recording grant. | Dropped (valid once #34 signs everything same-team). |
+| 41 | **P2** | Blanket `*.dist-info` copy shipped pip/setuptools/py2app metadata and duplicate distributions. | Build-tool metadata blacklisted. |
+| 42 | **P2** | Self-check didn't import the GUI/sensor stack — a bundle missing `rumps`/`Vision` would ship "verified". | Self-check now imports rumps/webview/Quartz/Vision/AppKit (import-only, headless-safe). |
+| 43 | **P2** | Docs told users to run raw py2app (→ broken bundle, missing dylib/metadata steps) and `notarytool submit` on a bare `.app` (invalid — needs zip/dmg/pkg). | DESKTOP.md defers to `build_release.sh`; stale plist path fixed. |
+
+### Verified and REJECTED / accepted as intended (do not "fix")
+- **"`_spawn_chat_window` env leak via CORTANA_CHILD"** — no persistence path; env is per-`Popen`.
+- **Lazy in-function `import Quartz/Vision` untraced by py2app** — false; modulegraph
+  traces bytecode imports; all pyobjc wrappers verified present in the zip.
+- **Wheel `package-data` for `cortana.webui`** despite the setuptools warning — works;
+  `index.html` verified in the wheel and the bundle; `importlib.resources` resolves.
+- **Config TOML vs in-code defaults drift** — checked key-by-key: currently identical,
+  so the unshipped bundle TOML is latent dead weight, not an active bug (left as a
+  known follow-up: make `DEFAULT_CONFIG_PATH` bundle-aware or drop the resource).
+- **MLX chat holding the generation lock across a full streamed reply** — accepted:
+  bounded contention beats corrupting a non-thread-safe model.
+
+### Verification
+- `./ci/run.sh` — **265 passed**, branch coverage 96.1%, hermetic.
+- Release pipeline exercised end-to-end unsigned on this Mac: fresh venv → py2app →
+  mlx rsync → metadata → headless boot self-check through the real app binary.
+- Still requires a real signed run + GUI session (docs/PRODUCTION.md checklist):
+  notarization acceptance, TCC grant flow, live MLX inference, menu interactions.
+
 ## 3. Remaining recommendations (not done — prioritized)
 
 1. **(P1) Surface tracking-thread death in the menu.** If the loop crashes (e.g.
