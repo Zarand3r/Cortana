@@ -56,9 +56,20 @@ bundle itself must be exercised on hardware once per release:
       traffic occurs after the first-run download.
 - [ ] Rebuild + reinstall → Screen Recording grant persists (proves signing/notarization).
 
+## Build-pipeline status
+
+The unsigned pipeline is **validated end-to-end on a real Mac**: fresh pinned venv →
+py2app → full-`mlx` rsync → dist-info metadata → headless boot self-check through the
+actual app binary (`SELFCHECK OK backend=mlx …`). The py2app/MLX freeze traps found
+along the way (namespace-package shadowing, unsigned-dylib linkage, `--deep` signing,
+metadata stripping) are fixed and regression-guarded by the self-check gate; see
+REVIEW.md §1c. The signing/notarization steps (6–8) are written but have not yet run
+with a real certificate — expect at most one iteration there.
+
+Config resolution in the shipped app: `~/.config/cortana/cortana.toml` (user-editable,
+survives updates) → the bundle's `Resources/cortana.toml` → in-code defaults.
+
 ## Known follow-ups (not blockers, tracked in REVIEW.md §3)
 
-- py2app + MLX (Metal libs) may need `packages`/`dylib` tweaks on the first real build.
 - App icon (`.icns`) not yet set — bundle uses the default.
-- Config path in a bundle falls back to in-code defaults if the TOML isn't found
-  (non-fatal; the frozen app relies on `apply_production_defaults`, not the TOML).
+- `create-dmg` styling (icon layout) unverified; the `hdiutil` fallback always works.

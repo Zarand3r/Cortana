@@ -1,9 +1,11 @@
 # Cortana Desktop App (menu-bar) — design & build
 
-> Status: **runs from source; `.app` packaging is scaffolded but unverified in CI**
-> (no GUI / py2app in the test environment). The testable core (`DesktopController`)
-> is fully covered; the rumps/pywebview/asyncio shell is native and marked
-> `# pragma: no cover`. Governed by `STYLE.md`.
+> Status: **runs from source; the `.app` build pipeline is validated end-to-end**
+> (`./scripts/build_release.sh` builds the bundle and boots it through a headless
+> self-check on a real Mac — see `docs/PRODUCTION.md`). Signing/notarization and
+> the interactive GUI checklist still require a Developer ID + a GUI session. The
+> testable core (`DesktopController`) is fully covered; the rumps/pywebview/asyncio
+> shell is native and marked `# pragma: no cover`. Governed by `STYLE.md`.
 
 ## Why a desktop app
 

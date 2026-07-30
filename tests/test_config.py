@@ -24,6 +24,26 @@ def test_load_missing_path_returns_defaults(tmp_path):
     assert cfg == Config()
 
 
+def test_user_config_takes_precedence(tmp_path, monkeypatch):
+    # ~/.config/cortana/cortana.toml wins over the repo default: it's the location
+    # that survives .app updates (editing inside a signed bundle breaks the seal).
+    home = tmp_path / "home"
+    (home / ".config" / "cortana").mkdir(parents=True)
+    (home / ".config" / "cortana" / "cortana.toml").write_text(
+        "[perception]\ninterval = 42.0\n")
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
+    cfg = Config.load()
+    assert cfg.interval == 42.0
+
+
+def test_no_user_config_falls_through_to_repo_default(tmp_path, monkeypatch):
+    home = tmp_path / "empty-home"
+    home.mkdir()
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
+    cfg = Config.load()                       # repo config/cortana.toml (or defaults)
+    assert cfg.interval == Config().interval  # matches — the two are kept identical
+
+
 def test_from_toml_overrides_only_present_keys(tmp_path):
     path = _write(tmp_path, """
         [perception]
