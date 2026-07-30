@@ -7,6 +7,7 @@ defaults. TOML is read with the stdlib ``tomllib`` (Python 3.11+) — no depende
 
 from __future__ import annotations
 
+import sys
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -35,6 +36,21 @@ def _as_frozenset(v):
 
 # The shipped config file lives in a top-level `config/` directory (repo root).
 DEFAULT_CONFIG_PATH = Path(__file__).resolve().parent.parent / "config" / "cortana.toml"
+
+
+def _default_config_candidates() -> list[Path]:
+    """Where to look for the default TOML, in order. From source that's the repo's
+    `config/cortana.toml`; in a frozen .app the source-relative path points inside
+    the zipped stdlib (never exists), so also try the bundle's `Resources/` — where
+    the build ships the TOML — and a user-editable location that survives app
+    updates (editing inside a signed bundle would break its signature)."""
+    candidates = [Path.home() / ".config" / "cortana" / "cortana.toml",
+                  DEFAULT_CONFIG_PATH]
+    if getattr(sys, "frozen", False):  # pragma: no cover - py2app bundle only
+        # sys.executable = Cortana.app/Contents/MacOS/python -> ../Resources/
+        candidates.append(Path(sys.executable).resolve().parent.parent
+                          / "Resources" / "cortana.toml")
+    return candidates
 
 
 @dataclass
@@ -132,7 +148,13 @@ class Config:
 
     @classmethod
     def load(cls, path=None) -> "Config":
-        """Load from ``path`` (default: the shipped config/cortana.toml). Returns
-        in-code defaults when the file is absent."""
-        path = Path(path) if path is not None else DEFAULT_CONFIG_PATH
-        return cls.from_toml(path) if path.exists() else cls()
+        """Load from ``path``; with no path, the first existing default location
+        (~/.config/cortana/, the repo's config/, or the app bundle's Resources/).
+        Returns in-code defaults when none exists."""
+        if path is not None:
+            p = Path(path)
+            return cls.from_toml(p) if p.exists() else cls()
+        for candidate in _default_config_candidates():
+            if candidate.exists():
+                return cls.from_toml(candidate)
+        return cls()

@@ -177,6 +177,33 @@ def test_reflection_text_capped_in_prompt():
     assert ("x" * (_PER_MEMORY_CHARS + 1)) not in prompt     # not the full untruncated blob
 
 
+# Review pass 4: make_loop shares an injected backend (one resident MLX model, not
+# two) and embed=true without Ollama is loudly disabled, not silently broken.
+def test_make_loop_uses_injected_backend(tmp_path):
+    from cortana.cli import make_loop
+    from cortana.config import Config
+    cfg = Config(); cfg.backend = "fake"; cfg.db_path = tmp_path / "m.db"
+    shared = FakeLLMBackend()
+    loop_obj, mem = make_loop(cfg, backend=shared)
+    try:
+        assert loop_obj._backend is shared           # no second backend constructed
+    finally:
+        mem.close()
+
+
+def test_make_loop_disables_embeddings_without_ollama(tmp_path, caplog):
+    from cortana.cli import make_loop
+    from cortana.config import Config
+    cfg = Config(); cfg.backend = "fake"; cfg.embed = True; cfg.db_path = tmp_path / "m.db"
+    with caplog.at_level("WARNING"):
+        loop_obj, mem = make_loop(cfg)
+    try:
+        assert loop_obj._embedder is None            # not a broken Ollama embedder
+        assert any("DISABLED" in r.message for r in caplog.records)   # and it says so
+    finally:
+        mem.close()
+
+
 # P1: close() serializes against in-flight recall on the shared read connection.
 def test_close_waits_for_in_flight_recall(tmp_path):
     import threading

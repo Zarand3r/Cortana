@@ -1,9 +1,11 @@
 # Cortana Desktop App (menu-bar) — design & build
 
-> Status: **runs from source; `.app` packaging is scaffolded but unverified in CI**
-> (no GUI / py2app in the test environment). The testable core (`DesktopController`)
-> is fully covered; the rumps/pywebview/asyncio shell is native and marked
-> `# pragma: no cover`. Governed by `STYLE.md`.
+> Status: **runs from source; the `.app` build pipeline is validated end-to-end**
+> (`./scripts/build_release.sh` builds the bundle and boots it through a headless
+> self-check on a real Mac — see `docs/PRODUCTION.md`). Signing/notarization and
+> the interactive GUI checklist still require a Developer ID + a GUI session. The
+> testable core (`DesktopController`) is fully covered; the rumps/pywebview/asyncio
+> shell is native and marked `# pragma: no cover`. Governed by `STYLE.md`.
 
 ## Why a desktop app
 
@@ -70,22 +72,23 @@ tab via `webbrowser.open` — simpler but not a native window.)
 Grant **Screen Recording** (and **Accessibility** if using `--read-focused-text`) to
 the launching app in System Settings → Privacy & Security, then restart it.
 
-## Build the `.app` (scaffold — verify on a real Mac)
+## Build the `.app`
+
+**Use the release script — do not run py2app by hand.** A raw
+`python bundle/build_app.py py2app` produces a bundle **missing the mlx native
+dylibs and the dist-info metadata** (post-build steps the script performs), and
+`codesign --deep` does not sign Mach-O files under `Resources/` (notarization would
+reject them) — the script signs every nested dylib inside-out instead.
 
 ```bash
-./setup.sh                                        # installs the desktop runtime deps
-./.venv/bin/pip install '.[build]'                # adds py2app (build-only)
-./.venv/bin/python packaging/build_app.py py2app  # -> dist/Cortana.app
+export SIGN_ID="Developer ID Application: You (TEAMID)"   # omit -> unsigned local build
+export NOTARY_PROFILE="cortana-notary"                     # omit -> signed, un-notarized
+./scripts/build_release.sh                                 # -> dist/Cortana.dmg
 ```
 
-**Signing/notarization (required for TCC grants to persist across rebuilds):**
-```bash
-codesign --deep --force --options runtime \
-  --sign "Developer ID Application: <you>" dist/Cortana.app
-xcrun notarytool submit dist/Cortana.app --keychain-profile <profile> --wait
-xcrun stapler staple dist/Cortana.app
-```
-Unsigned bundles still work, but the Screen Recording grant can reset on each rebuild.
+Full pipeline + real-Mac verification checklist: [`PRODUCTION.md`](PRODUCTION.md).
+Unsigned bundles still work locally, but the Screen Recording grant can reset on
+each rebuild.
 
 ### Known gotchas to verify
 - **Resource paths in a bundle.** `chatapp.INDEX_PATH` and `Config.DEFAULT_CONFIG_PATH`
@@ -100,7 +103,7 @@ Unsigned bundles still work, but the Screen Recording grant can reset on each re
   the `chat-window` entry dispatches there, or embed the window differently.
 
 ## Out of scope (now)
-- Auto-launch at login (the existing `dist/com.cortana.tracker.plist` + `install.sh`
+- Auto-launch at login (the existing `launchd/com.cortana.tracker.plist` + `install.sh`
   cover the headless daemon; a menu-bar LaunchAgent is a small follow-up).
 - The guidance advisor's menu surface (built when the advisor lands).
 - Windows/Linux packaging (Cortana is macOS-only by design).

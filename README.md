@@ -67,13 +67,14 @@ Cortana is a normal Python package, so there are three ways to hand it off:
 ./.venv/bin/pip install build && ./.venv/bin/python -m build   # -> dist/cortana-0.1.0-*.whl
 #    they:  pip install 'cortana-0.1.0-py3-none-any.whl[desktop]'
 
-# 3. Build a double-clickable macOS .app (needs signing to distribute widely):
-./.venv/bin/pip install '.[build]'
-./.venv/bin/python packaging/build_app.py py2app               # -> dist/Cortana.app
+# 3. Build the double-clickable menu-bar .app (the single-artifact product):
+./scripts/build_release.sh        # -> dist/Cortana.app (unsigned local build)
+#    with SIGN_ID + NOTARY_PROFILE set -> dist/Cortana.dmg, notarized for anyone
 ```
 
-Signing/notarization (so the Screen Recording grant persists on other Macs) is in
-[`docs/DESKTOP.md`](docs/DESKTOP.md).
+Do **not** run py2app by hand — the release script performs required post-build
+steps (mlx dylibs, metadata, a headless boot self-check) and signs nested code
+correctly. Details + checklist: [`docs/PRODUCTION.md`](docs/PRODUCTION.md).
 
 ## The pieces, individually
 

@@ -27,7 +27,7 @@ fi
 
 mkdir -p "$(dirname "$PLIST_DST")"
 sed -e "s#__PYTHON__#${PY}#g" -e "s#__WORKDIR__#${REPO}#g" \
-  "$REPO/dist/${LABEL}.plist" > "$PLIST_DST"
+  "$REPO/launchd/${LABEL}.plist" > "$PLIST_DST"
 
 launchctl unload "$PLIST_DST" 2>/dev/null || true
 launchctl load "$PLIST_DST"

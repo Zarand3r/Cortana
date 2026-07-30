@@ -19,3 +19,6 @@ htmlcov/
 dist/*.whl
 dist/*.tar.gz
 *.egg-info/
+dist/
+build/
+.venv-build/
