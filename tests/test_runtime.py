@@ -51,6 +51,20 @@ def test_source_run_keeps_ollama_default(monkeypatch):
     assert cfg.backend == "ollama"                   # from source, nothing changes
 
 
+# --- offline enforcement (the privacy gate) ----------------------------------
+
+def test_enforce_offline_sets_hf_env(monkeypatch):
+    # Once the model is cached there is NO legitimate egress: hf_hub must be hard
+    # offline or every mlx_lm.load revalidates against huggingface.co (observed
+    # live via lsof during on-device verification).
+    monkeypatch.delenv("HF_HUB_OFFLINE", raising=False)
+    monkeypatch.delenv("HF_HUB_DISABLE_TELEMETRY", raising=False)
+    import os
+    runtime.enforce_offline()
+    assert os.environ["HF_HUB_OFFLINE"] == "1"
+    assert os.environ["HF_HUB_DISABLE_TELEMETRY"] == "1"
+
+
 # --- model cache detection ---------------------------------------------------
 
 def test_is_model_available_false_when_uncached(tmp_path, monkeypatch):

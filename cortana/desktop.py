@@ -309,6 +309,12 @@ def run_app(cfg) -> int:  # pragma: no cover - native menu-bar app (rumps)
     from cortana import runtime
 
     runtime.apply_production_defaults(cfg)   # frozen .app -> bundled MLX runtime, no Ollama
+    # Privacy gate: once the model is in the local cache there is NO legitimate
+    # network use — force hf_hub offline NOW, before any code path (even an early
+    # chat request) can lazy-load the model and revalidate against huggingface.co.
+    # When the model still needs its one-time download, _provision sets this after.
+    if cfg.backend != "mlx" or runtime.is_model_available(cfg.model):
+        runtime.enforce_offline()
     # Cheap constructor: MLXBackend is lazy (model loads on first USE, after the
     # provisioning gate below) — an eager load here would block the launch for the
     # whole first-run download with no menu icon and no status line.
@@ -360,6 +366,7 @@ def run_app(cfg) -> int:  # pragma: no cover - native menu-bar app (rumps)
                                                screen_recording=True)
                     set_status(msg)
                     runtime.ensure_model(cfg.model, progress=set_status)
+                runtime.enforce_offline()   # download done -> no further egress, ever
             if not runtime.screen_recording_granted():
                 set_status("Grant Screen Recording to start…")
                 runtime.request_screen_recording()
