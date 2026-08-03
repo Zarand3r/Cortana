@@ -51,6 +51,16 @@ def apply_production_defaults(cfg) -> None:
         cfg.model = DEFAULT_MLX_MODEL
 
 
+def enforce_offline() -> None:
+    """Hard-disable huggingface_hub network access (and its telemetry) for this
+    process. Called the moment the model is confirmed in the local cache: without
+    it, every ``mlx_lm.load`` revalidates the cached model against huggingface.co
+    over HTTPS — real egress, observed live via lsof, violating the 'first-run
+    download is the ONE network exception' promise."""
+    os.environ["HF_HUB_OFFLINE"] = "1"
+    os.environ["HF_HUB_DISABLE_TELEMETRY"] = "1"
+
+
 def hf_cache_dir() -> Path:
     """Where huggingface_hub / mlx-lm cache downloaded models."""
     home = os.environ.get("HF_HOME")
