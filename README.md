@@ -50,10 +50,9 @@ source .venv/bin/activate
 cortana desktop            # the menu-bar app (or just: cortana)
 ```
 
-First launch: grant **Screen Recording** (and **Accessibility** for focused-text) to
-the launching app in **System Settings → Privacy & Security**, then relaunch — macOS
-ties those permissions to the app. (Manual install instead of `setup.sh`:
-`pip install '.[desktop]'` + `ollama pull qwen2.5:7b-instruct`.)
+First launch: grant **Screen Recording** in **System Settings → Privacy & Security**,
+then relaunch — macOS ties the permission to the launching app. (Manual install
+instead of `setup.sh`: `pip install '.[desktop]'` + `ollama pull qwen2.5:7b-instruct`.)
 
 ## Give it to someone else (export / distribute)
 
@@ -91,14 +90,6 @@ The menu-bar app composes these; each is also a CLI facet (handy for testing):
 Configuration lives in [`config/cortana.toml`](config/cortana.toml) (in-code defaults
 are authoritative; the TOML overrides them). Common flags: `--config`, `--backend
 ollama|mlx|fake`, `--model`, `--db`, `--interval`, `--no-redact`.
-
-## Run continuously at login (headless)
-
-```bash
-./install.sh            # loads ~/Library/LaunchAgents/com.cortana.tracker.plist
-tail -f cortana.log
-./install.sh uninstall
-```
 
 ## Design & development
 

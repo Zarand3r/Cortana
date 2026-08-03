@@ -1,11 +1,14 @@
 # Cortana — System Design (Principal-Engineer Deep Dive)
 
-> Status: **roadmap, pre-implementation — refined v2.** Produced via
-> `strategic-engineering-planner`, hardened by an adversarial design-review subagent
-> (false positives rejected — see §Risks), then refined to resolve all open
-> decisions with concrete defaults. Governed by `karpathy-guidelines` /
-> `principal-production-engineer`. This file is the frozen seam for the
-> `/implement` (elves) harness.
+> Status: **shipped — historical design record.** This was the pre-implementation
+> roadmap (produced via `strategic-engineering-planner`, adversarially reviewed);
+> every phase has since landed on `main`. It remains the architectural rationale;
+> where reality diverged, the per-subsystem docs are authoritative:
+> [`MEMORY.md`](MEMORY.md) · [`AGENT_LOOP.md`](AGENT_LOOP.md) ·
+> [`CHAT.md`](CHAT.md) · [`DESKTOP.md`](DESKTOP.md) ·
+> [`PRODUCTION.md`](PRODUCTION.md) (shipping) · [`../REVIEW.md`](../REVIEW.md)
+> (what review changed). Notable divergence: the product consolidated into ONE
+> menu-bar app — the standalone launchd daemon described below was retired.
 
 ---
 
@@ -126,7 +129,7 @@ to a build phase (see Milestone Roadmap).
    → grounded, cited answer to a user question (`cortana ask`).
 5. **Privacy/safety** (Phase 5, cross-cutting) — redaction before memory write,
    secure-input/exclusions, documented at-rest. Gates running on real data.
-6. **Lifecycle/ops** (Phase 6, cross-cutting) — 7B default, launchd daemon, metrics.
+6. **Lifecycle/ops** (Phase 6, cross-cutting) — 7B default, always-on lifecycle (menu-bar app), metrics.
 
 ## Core Data Model (the central fix)
 
@@ -215,9 +218,10 @@ unchanged?     ──yes──▶ count only, store nothing  [compaction; dwell 
 otherwise      ──────▶ redact → enqueue full event
 ```
 
-**Process lifecycle (target):** `launchd` (RunAtLoad + KeepAlive) → run loop →
-SIGTERM → bounded drain → flush metrics → exit 0. Abnormal kill → next start is a
-clean session (in-memory queue is lossy by design — documented; WAL guarantees
+**Process lifecycle (as shipped):** the menu-bar app owns the loop
+(`_TrackingService` on a background asyncio thread; Start/Stop = cancel → bounded
+drain → close writer — see `DESKTOP.md`). Abnormal kill → next start is a clean
+session (in-memory queue is lossy by design — documented; WAL guarantees
 already-written rows survive uncorrupted).
 
 ## Architecture Options
@@ -372,10 +376,11 @@ P1–P4 before breadth.
 - **Gate:** must land before the loop runs on real screen data. *(Old M6 privacy half.)*
 
 ### Phase 6 — Defaults & ops *(always-on)*
-- **Capability:** runs as a feasible, observable daemon.
-- **Code:** default model `qwen2.5:7b-instruct` (72B opt-in);
-  `dist/com.cortana.tracker.plist` (RunAtLoad+KeepAlive) + `install.sh`; `Metrics`
-  (queue depth, LLM p95, OCR fail rate, drops) logged every 10 min.
+- **Capability:** runs as a feasible, observable always-on app.
+- **Code (as shipped):** default model `qwen2.5:7b-instruct` (Ollama) /
+  `Qwen2.5-7B-Instruct-4bit` (bundled MLX); lifecycle owned by the menu-bar app
+  (the separate launchd daemon was retired); `Metrics` (queue depth, LLM p95, OCR
+  fail rate, drops) logged every 10 min.
 - **Tests:** percentile math. *(Old M6 model default + M7.)*
 
 ### Phase 7 — Advanced agency *(deferred — only when a concrete need appears)*

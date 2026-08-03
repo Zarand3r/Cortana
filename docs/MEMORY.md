@@ -260,11 +260,12 @@ memory; and **LongMemEval** is the standard yardstick for long-horizon recall
    FakeEmbedder, or point it at a real embedder); a CI test gates against a baseline
    so retrieval regressions fail the build. *Remaining:* grow the dataset and record a
    real-embedder number.
-3. ~~**Reflection / consolidation (P1).**~~ **DONE.** `cortana/consolidation.py`
-   `consolidate()` summarizes recent episodes into a durable **reflection** stored in
-   a `reflections` table (schema v4), exposed as `cortana digest`. *Remaining:*
-   auto-schedule it (daily via launchd/cron), and include reflections in retrieval so
-   "what have I been working on lately" surfaces the digest.
+3. ~~**Reflection / consolidation (P1).**~~ **DONE, incl. scheduling.**
+   `cortana/consolidation.py` summarizes recent episodes into a durable
+   **reflection** (`reflections` table, schema v4; `cortana digest` for manual
+   runs). The agent loop auto-consolidates on a wall-clock due-check (newest
+   reflection >24h old; `since`-bounded; generate on the llm executor), and
+   `reason()` injects recent reflections into every answer prompt.
 4. **Recency × importance × relevance ranking (P1).** Score `recall` results by a
    weighted blend instead of pure recency: add an LLM/heuristic **importance** field on
    episodes and an exponential **recency decay**, combined with the §10.1 relevance
