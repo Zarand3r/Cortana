@@ -103,7 +103,6 @@ each rebuild.
   the `chat-window` entry dispatches there, or embed the window differently.
 
 ## Out of scope (now)
-- Auto-launch at login (the existing `launchd/com.cortana.tracker.plist` + `install.sh`
-  cover the headless daemon; a menu-bar LaunchAgent is a small follow-up).
-- The guidance advisor's menu surface (built when the advisor lands).
+- Auto-launch at login (a LaunchAgent for the menu-bar app is a small follow-up;
+  the old headless-daemon path was removed — the menu-bar app is the one product).
 - Windows/Linux packaging (Cortana is macOS-only by design).
