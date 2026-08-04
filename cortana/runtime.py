@@ -95,20 +95,31 @@ def readiness(*, model_available: bool, screen_recording: bool) -> tuple[Runtime
 # --------------------------------------------------------------------------- #
 # Native provisioning (macOS). Verified on a real Mac; not in the hermetic CI. #
 # --------------------------------------------------------------------------- #
+def _coregraphics():  # pragma: no cover - native dylib handle
+    """The TCC preflight/request functions are NOT bound by pyobjc's Quartz module
+    (calling them there raises AttributeError — which a fail-soft wrapper once
+    swallowed into a permanent 'not granted', wedging first-run setup). Call the
+    C API directly, as the repo already does for IsSecureEventInputEnabled."""
+    import ctypes
+    cg = ctypes.CDLL(
+        "/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics")
+    cg.CGPreflightScreenCaptureAccess.restype = ctypes.c_bool
+    cg.CGRequestScreenCaptureAccess.restype = ctypes.c_bool
+    return cg
+
+
 def screen_recording_granted() -> bool:  # pragma: no cover - native TCC preflight
     """Whether this process holds the Screen Recording grant (no prompt)."""
     try:
-        import Quartz  # lazy
-        return bool(Quartz.CGPreflightScreenCaptureAccess())
-    except Exception:  # noqa: BLE001 - absence of the API/grant reads as "not granted"
+        return bool(_coregraphics().CGPreflightScreenCaptureAccess())
+    except Exception:  # noqa: BLE001 - no CoreGraphics (non-mac) reads as "not granted"
         return False
 
 
 def request_screen_recording() -> bool:  # pragma: no cover - native TCC request
     """Trigger the one-time Screen Recording prompt; returns the resulting grant."""
     try:
-        import Quartz  # lazy
-        return bool(Quartz.CGRequestScreenCaptureAccess())
+        return bool(_coregraphics().CGRequestScreenCaptureAccess())
     except Exception:  # noqa: BLE001
         return False
 
