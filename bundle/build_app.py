@@ -19,6 +19,7 @@ APP = [str(_ROOT / "desktop_app.py")]
 
 OPTIONS = {
     "argv_emulation": False,
+    "iconfile": str(_ROOT / "bundle" / "Cortana.icns"),   # regen: bundle/make_icon.py
     "packages": [
         "cortana",
         # Bundled MLX runtime + model downloader + transformers stack. Whole dirs are
