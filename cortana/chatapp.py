@@ -1,10 +1,12 @@
 """A local, private ChatGPT-style web app backed by an on-device LLM.
 
-This is a *separate* surface from the Cortana perception daemon: a thin,
-zero-dependency web server (stdlib ``http.server`` only) that serves a
-single-page chat UI and streams the local model's reply token-by-token over
-Server-Sent Events. It reuses the package's ``LLMBackend`` contract, so the same
-Ollama / MLX models drive both perception and chat. Nothing leaves ``127.0.0.1``.
+The chat surface of the one Cortana app (the menu-bar shell serves it and opens a
+native window onto it): a thin, zero-dependency web server (stdlib ``http.server``
+only) that serves a single-page chat UI, grounds each answer in screen memory
+(live working-memory block + retrieved long-term rows), and streams the reply
+token-by-token over Server-Sent Events. It reuses the package's ``LLMBackend``
+contract, so the same Ollama / MLX model drives both perception and chat. Nothing
+leaves ``127.0.0.1``.
 
 The routing, request parsing and SSE framing are pure functions (fully tested);
 the socket plumbing (``ChatHandler`` / ``serve``) is a thin, native-I/O shell
@@ -45,10 +47,6 @@ class Conversation:
     def snapshot(self) -> list[Message]:
         with self._lock:
             return list(self._msgs)
-
-    def clear(self) -> None:
-        with self._lock:
-            self._msgs = []
 
 
 _CONTEXT_PER_MEMORY_CHARS = 400   # cap each memory in the context block

@@ -1,11 +1,16 @@
 """Command-line entrypoint for the Cortana agent.
 
-  python -m cortana run            start the continuous perceive→remember loop (live)
+  python -m cortana                the unified menu-bar desktop app (default)
+  python -m cortana desktop        same, explicitly
+  python -m cortana run            just the perceive→remember loop (--demo for synthetic)
   python -m cortana ask "<q>"      recall & reason over memory (read-only)
-  python -m cortana chat           serve a local ChatGPT-style web UI (on-device LLM)
+  python -m cortana recommend      one grounded suggestion from recent activity
+  python -m cortana digest         consolidate recent episodes into a reflection
+  python -m cortana chat           just the chat web UI
+  python -m cortana chat-window    (internal) the native window subprocess
 
-The pure parts (config building, validation, wiring, `ask`) are unit-tested. `run`'s
-live loop needs PyObjC + a local model, so it is exercised on a real Mac, not in CI.
+The pure parts (config building, validation, wiring, `ask`) are unit-tested; the
+native paths (live loop, GUI) are exercised on a real Mac, not in CI.
 """
 
 from __future__ import annotations

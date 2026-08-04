@@ -39,11 +39,6 @@ class WorkingMemory:
             return items
         return items[-limit:] if limit > 0 else []
 
-    def since(self, ts_iso: str) -> list[Observation]:
-        """Observations with ``ts >= ts_iso`` (ISO-8601 UTC), chronological."""
-        with self._lock:
-            return [o for o in self._buf if o.ts >= ts_iso]
-
     def clear(self) -> None:
         with self._lock:
             self._buf.clear()

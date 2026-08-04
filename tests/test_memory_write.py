@@ -5,6 +5,10 @@ from cortana.memory import Memory
 from cortana.perception import Observation, Semantic
 
 
+from conftest import counts
+
+
+
 def _obs(ocr, *, ts="2026-06-14T10:00:00+00:00", app="Notes", title="Doc",
          skip_reason="", captured=True):
     return Observation(ts=ts, app_name=app, bundle_id="com.app", window_title=title,
@@ -38,7 +42,7 @@ def test_remember_one_summary_per_batch(tmp_path):
     mem = _open(tmp_path)
     batch = [_obs("a"), _obs("b"), _obs("c")]
     sid = mem.remember(batch, _sem("Reviewing three things."))
-    c = mem.counts()
+    c = counts(mem)
     assert c["summaries"] == 1
     assert c["context"] == 3
     rows = list(mem._conn.execute("SELECT summary_id FROM context"))
@@ -69,7 +73,7 @@ def test_remember_without_summary(tmp_path):
     mem = _open(tmp_path)
     sid = mem.remember([_obs("a"), _obs("b")], None)   # no semantic record
     assert sid is None
-    c = mem.counts()
+    c = counts(mem)
     assert c["context"] == 2
     assert c["summaries"] == 0
     assert all(r[0] is None for r in mem._conn.execute("SELECT summary_id FROM context"))
@@ -89,6 +93,6 @@ def test_remember_dropped(tmp_path):
 def test_fts_synced_on_insert(tmp_path):
     mem = _open(tmp_path)
     mem.remember([_obs("hello"), _obs("world")], _sem())
-    c = mem.counts()
+    c = counts(mem)
     assert c["context_fts"] == c["context"]  # P2
     mem.close()

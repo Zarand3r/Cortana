@@ -46,14 +46,6 @@ def test_recent_limit_zero_returns_none_not_everything():
     assert len(wm.recent(limit=None)) == 3
 
 
-def test_since_filters_by_timestamp():
-    wm = WorkingMemory(maxlen=10)
-    wm.add(_obs("old", ts="2026-07-04T09:00:00+00:00"))
-    wm.add(_obs("new", ts="2026-07-04T11:00:00+00:00"))
-    got = wm.since("2026-07-04T10:00:00+00:00")
-    assert [o.ocr_text for o in got] == ["new"]
-
-
 def test_recent_returns_a_copy_not_the_live_buffer():
     wm = WorkingMemory(maxlen=10)
     wm.add(_obs("a", ts="2026-07-04T10:00:00+00:00"))

@@ -4,6 +4,10 @@ import sqlite3
 
 from cortana.memory import Memory
 
+from conftest import counts
+
+
+
 # The legacy v0 schema (denormalized summary per row) we migrate away from.
 _LEGACY_SCHEMA = """
 CREATE TABLE context (
@@ -56,9 +60,9 @@ def test_legacy_migration(tmp_path):
     cols = {r[1] for r in mem._conn.execute("PRAGMA table_info(context)")}
     assert {"summary_id", "content_hash", "summary"} <= cols
     # old rows still readable
-    assert mem.counts()["context"] == 2
+    assert counts(mem)["context"] == 2
     # FTS rebuilt to match existing rows (P2)
-    c = mem.counts()
+    c = counts(mem)
     assert c["context_fts"] == c["context"]
     # and the rebuilt index is actually searchable
     assert len(mem.recall(query="budget")) == 2
@@ -71,5 +75,5 @@ def test_migration_is_idempotent(tmp_path):
     Memory(db).close()        # migrate once
     mem = Memory(db)          # open again — must not re-migrate or error
     assert mem._conn.execute("PRAGMA user_version").fetchone()[0] == 4
-    assert mem.counts()["context"] == 2
+    assert counts(mem)["context"] == 2
     mem.close()
