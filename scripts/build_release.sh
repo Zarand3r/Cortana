@@ -88,55 +88,57 @@ if ! grep -q "SELFCHECK OK" <<<"$CHECK_OUT"; then
 fi
 grep "SELFCHECK OK" <<<"$CHECK_OUT"
 
-if [[ -z "${SIGN_ID:-}" ]]; then
-  echo "!! SIGN_ID not set — built an UNSIGNED $APP (fine for local use; others will"
-  echo "   hit Gatekeeper and the Screen Recording grant may reset on rebuild)."
-  echo "   Set SIGN_ID + NOTARY_PROFILE to produce a distributable notarized DMG."
-  exit 0
-fi
-
-echo "==> [6/8] codesign INSIDE-OUT with: $SIGN_ID"
-# --deep is deprecated AND skips Mach-O files under Resources/ (where py2app puts
-# the entire Python runtime) — notarization rejects any unsigned Mach-O. So: sign
-# every nested .so/.dylib first, then the frameworks, then the executables, then
-# the bundle. Entitlements go on the executables only.
-find "$APP" -type f \( -name '*.so' -o -name '*.dylib' \) -print0 |
-  while IFS= read -r -d '' lib; do
-    codesign --force --options runtime --timestamp --sign "$SIGN_ID" "$lib"
-  done
-if [[ -d "$APP/Contents/Frameworks" ]]; then
-  find "$APP/Contents/Frameworks" -mindepth 1 -maxdepth 1 -print0 |
-    while IFS= read -r -d '' fw; do
-      codesign --force --options runtime --timestamp --sign "$SIGN_ID" "$fw"
+if [[ -n "${SIGN_ID:-}" ]]; then
+  echo "==> [6/8] codesign INSIDE-OUT with: $SIGN_ID"
+  # --deep is deprecated AND skips Mach-O files under Resources/ (where py2app puts
+  # the entire Python runtime) — notarization rejects any unsigned Mach-O. So: sign
+  # every nested .so/.dylib first, then the frameworks, then the executables, then
+  # the bundle. Entitlements go on the executables only.
+  find "$APP" -type f \( -name '*.so' -o -name '*.dylib' \) -print0 |
+    while IFS= read -r -d '' lib; do
+      codesign --force --options runtime --timestamp --sign "$SIGN_ID" "$lib"
     done
+  if [[ -d "$APP/Contents/Frameworks" ]]; then
+    find "$APP/Contents/Frameworks" -mindepth 1 -maxdepth 1 -print0 |
+      while IFS= read -r -d '' fw; do
+        codesign --force --options runtime --timestamp --sign "$SIGN_ID" "$fw"
+      done
+  fi
+  codesign --force --options runtime --timestamp \
+    --entitlements "$ENTITLEMENTS" --sign "$SIGN_ID" "$APP/Contents/MacOS/python"
+  codesign --force --options runtime --timestamp \
+    --entitlements "$ENTITLEMENTS" --sign "$SIGN_ID" "$APP"
+  codesign --verify --strict --verbose=2 "$APP"
+else
+  echo "==> [6/8] SIGN_ID not set — keeping py2app's ad-hoc signature."
+  echo "    Downloaders must right-click -> Open once (Gatekeeper); the Screen"
+  echo "    Recording grant resets on each rebuild. Set SIGN_ID to fix both."
 fi
-codesign --force --options runtime --timestamp \
-  --entitlements "$ENTITLEMENTS" --sign "$SIGN_ID" "$APP/Contents/MacOS/python"
-codesign --force --options runtime --timestamp \
-  --entitlements "$ENTITLEMENTS" --sign "$SIGN_ID" "$APP"
-codesign --verify --strict --verbose=2 "$APP"
 
-if [[ -z "${NOTARY_PROFILE:-}" ]]; then
-  echo "!! NOTARY_PROFILE not set — app is signed but NOT notarized. Set it to finish."
-  exit 0
+if [[ -n "${SIGN_ID:-}" && -n "${NOTARY_PROFILE:-}" ]]; then
+  echo "==> [7/8] Notarize + staple the APP (so a dragged-out copy verifies offline)"
+  ditto -c -k --keepParent "$APP" dist/Cortana-app.zip
+  xcrun notarytool submit dist/Cortana-app.zip --keychain-profile "$NOTARY_PROFILE" --wait
+  xcrun stapler staple "$APP"
+  rm -f dist/Cortana-app.zip
+else
+  echo "==> [7/8] Skipping notarization (needs SIGN_ID with a Developer ID cert"
+  echo "    + NOTARY_PROFILE)."
 fi
 
-echo "==> [7/8] Notarize + staple the APP itself (so a dragged-out copy verifies offline)"
-ditto -c -k --keepParent "$APP" dist/Cortana-app.zip
-xcrun notarytool submit dist/Cortana-app.zip --keychain-profile "$NOTARY_PROFILE" --wait
-xcrun stapler staple "$APP"
-rm -f dist/Cortana-app.zip
-
-echo "==> [8/8] Package DMG from the stapled app, notarize + staple the DMG"
+echo "==> [8/8] Package DMG"
 if command -v create-dmg >/dev/null 2>&1; then
   create-dmg --volname "Cortana" --app-drop-link 480 170 \
     --icon "Cortana.app" 140 170 --window-size 640 360 "$DMG" "$APP"
 else
-  echo "   (create-dmg not found; falling back to hdiutil)"
+  echo "   (create-dmg not found; using hdiutil)"
   hdiutil create -volname "Cortana" -srcfolder "$APP" -ov -format UDZO "$DMG"
 fi
-xcrun notarytool submit "$DMG" --keychain-profile "$NOTARY_PROFILE" --wait
-xcrun stapler staple "$DMG"
-xcrun stapler validate "$DMG"
-
-echo "==> Done: $DMG  (notarized — installs cleanly on any Apple-Silicon Mac)"
+if [[ -n "${SIGN_ID:-}" && -n "${NOTARY_PROFILE:-}" ]]; then
+  xcrun notarytool submit "$DMG" --keychain-profile "$NOTARY_PROFILE" --wait
+  xcrun stapler staple "$DMG"
+  xcrun stapler validate "$DMG"
+  echo "==> Done: $DMG (notarized — installs cleanly on any Apple-Silicon Mac)"
+else
+  echo "==> Done: $DMG (un-notarized — downloaders right-click -> Open once)"
+fi

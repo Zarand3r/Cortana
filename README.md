@@ -21,6 +21,20 @@ It runs as a **menu-bar desktop app**:
 
 ---
 
+## Download the app
+
+Grab **`Cortana.dmg`** from the [latest release](../../releases/latest), drag
+**Cortana.app** to Applications, and launch it — it lives in the **menu bar**
+(top-right). First launch on Apple Silicon:
+
+1. If macOS warns about an unidentified developer: **right-click → Open** (once).
+   *(Releases aren't notarized yet — a Developer ID build removes this step.)*
+2. Grant **Screen Recording** when prompted, then relaunch Cortana.
+3. If the local model isn't cached yet, the status line shows the one-time
+   ~4 GB download; after that Cortana is **100% offline**.
+
+Then: menu-bar icon → **Start Cortana** → the chat window opens and tracking runs.
+
 ## Try it in 30 seconds (no deps, no model)
 
 The whole pipeline runs against a synthetic screen + a fake model, so you can see
