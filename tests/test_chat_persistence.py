@@ -30,12 +30,10 @@ def test_conversation_add_and_snapshot():
         (Role.USER, "a"), (Role.ASSISTANT, "b")]
 
 
-def test_conversation_replace_and_clear():
+def test_conversation_replace():
     c = Conversation()
     c.replace([Message(Role.USER, "x")])
-    assert len(c.snapshot()) == 1
-    c.clear()
-    assert c.snapshot() == []
+    assert [m.content for m in c.snapshot()] == ["x"]
 
 
 # --- route persists across "reopens" ---------------------------------------

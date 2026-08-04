@@ -20,6 +20,10 @@ from cortana.perception import make_demo_sensor
 from cortana.reasoning import reason
 
 
+from conftest import counts
+
+
+
 def _populated_memory(tmp_path):
     cfg = Config()
     cfg.backend = "fake"
@@ -36,10 +40,10 @@ def test_loop_populates_memory_read_by_all_surfaces(tmp_path):
     mem, backend = _populated_memory(tmp_path)
     try:
         # tracking wrote real episodic + semantic memory
-        counts = mem.counts()
-        assert counts["context"] > 0
-        assert counts["summaries"] > 0
-        assert counts["context_fts"] == counts["context"]     # FTS in sync
+        n = counts(mem)
+        assert n["context"] > 0
+        assert n["summaries"] > 0
+        assert n["context_fts"] == n["context"]                 # FTS in sync
 
         # ask: grounded answer with citations drawn from that memory ("budget"
         # appears in one of the demo screens, so retrieval hits).

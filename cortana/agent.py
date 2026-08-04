@@ -122,10 +122,6 @@ class AgentLoop:
         # readers (chat/recommend) when injected; otherwise loop-local.
         self.working = working_memory or WorkingMemory(maxlen=config.working_memory_max)
 
-    @property
-    def drops_total(self) -> int:
-        return self.metrics.dropped
-
     async def run(self, *, max_ticks: int | None = None,
                   install_signal_handlers: bool = True) -> None:
         cfg = self._cfg

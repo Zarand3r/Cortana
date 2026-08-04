@@ -260,14 +260,6 @@ class Memory:
         finally:
             self._conn.isolation_level = prev   # always restore, else writes lose atomicity
 
-    def forget(self, older_than: str) -> int:
-        """Delete every memory older than ``older_than`` (ISO ts); drop orphan
-        summaries. Returns rows removed."""
-        removed = self._delete_older_than(older_than)
-        self._prune_orphan_summaries()
-        self._conn.commit()
-        return removed
-
     def prune(self) -> int:
         """Enforce retention: drop rows older than ``retention_days``, evict
         oldest-first until under ``max_db_bytes``, then drop orphan summaries.
@@ -435,16 +427,6 @@ class Memory:
                 f"SELECT {', '.join(cols)} FROM reflections "
                 "ORDER BY created_at DESC LIMIT ?", (max(1, limit),)))
         return [dict(zip(cols, r)) for r in rows]
-
-    # --- introspection ----------------------------------------------------- #
-    def counts(self) -> dict[str, int]:
-        def n(sql: str) -> int:
-            return self._conn.execute(sql).fetchone()[0]
-        return {
-            "context": n("SELECT count(*) FROM context"),
-            "context_fts": n("SELECT count(*) FROM context_fts"),
-            "summaries": n("SELECT count(*) FROM summaries"),
-        }
 
     def close(self) -> None:
         # Take the read lock so we never close the connection out from under an

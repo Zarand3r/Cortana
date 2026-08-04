@@ -67,7 +67,8 @@ def test_pruned_rows_drop_their_embeddings(tmp_path):
     # ON DELETE CASCADE: removing a context row removes its vector too.
     emb = FakeEmbedder()
     mem = _seed(tmp_path, emb)
-    mem.forget(older_than="2026-07-05T12:00:00+00:00")             # drops the 09:00 row
+    with mem._conn:                                                # drop the 09:00 row
+        mem._conn.execute("DELETE FROM context WHERE ts < '2026-07-05T12:00:00+00:00'")
     n = mem._conn.execute("SELECT count(*) FROM embeddings").fetchone()[0]
     assert n == 1
     mem.close()

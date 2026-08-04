@@ -8,11 +8,15 @@ every change as the regression spine.
 from cortana.backends import FakeLLMBackend
 from cortana.memory import Memory
 from cortana.perception import (
+
     Observation,
     changed,
     content_hash,
     extract_meaning,
 )
+
+from conftest import counts
+
 
 
 def _obs(ocr, *, ts, app, title="w"):
@@ -56,7 +60,7 @@ def test_golden_path_perceive_remember_recall(tmp_path):
 
     # AND the data model is sound: one summary per remembered batch (P1),
     # FTS mirrors context exactly (P2).
-    c = mem.counts()
+    c = counts(mem)
     assert c["summaries"] == batches_remembered
     assert c["context"] == batches_remembered
     assert c["context_fts"] == c["context"]

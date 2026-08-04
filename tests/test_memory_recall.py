@@ -4,6 +4,10 @@ from cortana.memory import Memory
 from cortana.perception import Observation, Semantic
 
 
+from conftest import counts
+
+
+
 def _obs(ocr, *, ts, app="Notes", title="Doc"):
     return Observation(ts=ts, app_name=app, bundle_id="com.app", window_title=title,
                        ocr_text=ocr, captured=True)
@@ -99,7 +103,7 @@ def test_fts_sync_on_delete(tmp_path):
     mem = _seed(tmp_path)
     mem._conn.execute("DELETE FROM context WHERE app_name='Mail'")
     mem._conn.commit()
-    c = mem.counts()
+    c = counts(mem)
     assert c["context_fts"] == c["context"]   # P2: index stays in lockstep
     assert mem.recall(query="email") == []     # deleted row no longer searchable
     mem.close()

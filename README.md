@@ -1,17 +1,37 @@
-# Cortana — a local, screen-aware chat agent
+# Cortana — the AI assistant that actually knows what you're doing
 
-Cortana is **one app**: a completely local, private macOS agent that watches what's
-on your screen, remembers it, **gives you recommendations based on your activity**,
-and lets you **chat with an assistant that knows your context** — all on-device.
-Nothing leaves your machine.
+Every AI assistant you've used starts every conversation blind. You paste context,
+re-explain your project, describe what's on your screen. **Cortana never asks —
+it already knows.** It lives in your Mac's menu bar, sees what you see, and builds
+a private, searchable memory of your working life:
 
-It runs as a **menu-bar desktop app**:
+- *"What was I working on this morning before the meeting?"*
+- *"Where did I see that error about the missing dylib?"*
+- *"What should I do next?"* → a concrete recommendation, grounded in what you've
+  actually been doing — not generic advice.
 
-- **Perceives** — every N seconds it captures the screen, OCRs it (Apple **Vision**),
-  and summarizes the activity with a **local LLM** (Ollama or MLX).
-- **Remembers** — stores a searchable, bounded episodic + semantic memory in SQLite.
-- **Recommends** — suggests a helpful next action grounded in your recent activity.
-- **Chats** — a ChatGPT-style window whose answers are grounded in your screen memory.
+**And nothing — not one byte — ever leaves your machine.** That's not a policy
+promise, it's architecture: the OCR is Apple Vision (on-device), the LLM is local
+(bundled MLX or Ollama), memory is a SQLite file on your disk, and the only open
+socket is the localhost chat server — verified with `lsof`, enforced in code, and
+covered by the test suite. No cloud, no account, no telemetry. The tradeoff every
+cloud assistant forces — *context vs privacy* — is the entire point of this app:
+you get **total context and total privacy**, because the assistant moves to your
+data instead of your data moving to it.
+
+How it works, as one menu-bar app:
+
+- **Perceives** — captures the screen every second, OCRs it on-device, and distills
+  activity with a local LLM. Idle screens cost nothing (change-detection gate);
+  password managers are never captured; secrets are redacted before storage.
+- **Remembers** — tiered memory: a live "right now" buffer, searchable episodic +
+  semantic long-term store (keyword + vector hybrid recall), and daily consolidated
+  reflections — bounded by retention caps you control.
+- **Chats** — a ChatGPT-style window where answers cite the actual timestamps and
+  apps they came from. Ask "what am I doing right now" and it answers from the
+  last few seconds.
+- **Recommends** — one click for a next-action suggestion grounded in your recent
+  activity.
 
 > ⚠️ **Cortana's memory is a searchable log of what's been on your screen.** It skips
 > password fields + known password managers and **redacts high-confidence secrets**

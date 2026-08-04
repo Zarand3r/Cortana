@@ -17,6 +17,7 @@ from cortana.memory import Memory
 from cortana.perception import Observation, Semantic
 
 
+
 @pytest.fixture
 def make_memory(tmp_path):
     """Memory factory that closes every connection it hands out (no leaks)."""
@@ -30,6 +31,9 @@ def make_memory(tmp_path):
     yield _make
     for m in created:
         m.close()
+
+from conftest import counts
+
 
 
 def _cfg(**kw):
@@ -120,7 +124,7 @@ def test_loop_honors_sensor_image_dedup(make_memory):
     _run(loop_obj, max_ticks=3)
 
     assert be.calls == 1                          # only the one real (OCR'd) screen
-    assert mem.counts()["context"] == 1           # unchanged frames not stored
+    assert counts(mem)["context"] == 1           # unchanged frames not stored
     assert loop_obj.metrics.ocr_skipped == 2      # both dedup frames skipped OCR
 
 
@@ -159,8 +163,8 @@ def test_perceive_remember_recall_end_to_end(make_memory):
     assert len(hits) == 1
     assert hits[0]["app_name"] == "Numbers"               # citation: where
     assert hits[0]["ts"] == "2026-06-15T10:00:00+00:00"   # citation: when
-    assert mem.counts()["context"] == 2
-    assert mem.counts()["summaries"] == be.calls          # one summary per batch
+    assert counts(mem)["context"] == 2
+    assert counts(mem)["summaries"] == be.calls          # one summary per batch
 
 
 # --- idle screens never call the LLM and are NOT persisted (compaction) ------ #
@@ -173,7 +177,7 @@ def test_idle_screens_skip_llm_and_are_not_stored(make_memory):
     assert be.calls == 2                                   # 2 distinct screens, not 6
     # Compaction: only the 2 distinct episodes are stored — idle frames aren't rows.
     # (At 1s capture this is what keeps the DB from exploding.)
-    assert mem.counts()["context"] == 2
+    assert counts(mem)["context"] == 2
     assert mem._conn.execute(
         "SELECT count(*) FROM context WHERE skip_reason='unchanged'").fetchone()[0] == 0
 
@@ -184,8 +188,8 @@ def test_changed_but_no_ocr_text_skips_llm(make_memory):
     mem, be = make_memory(), FakeLLMBackend()
     _run(AgentLoop(_cfg(batch_size=1), mem, be, sensor), max_ticks=1)
     assert be.calls == 0
-    assert mem.counts()["context"] == 1
-    assert mem.counts()["summaries"] == 0
+    assert counts(mem)["context"] == 1
+    assert counts(mem)["summaries"] == 0
 
 
 def test_sensor_returning_none_is_skipped(make_memory):
@@ -193,7 +197,7 @@ def test_sensor_returning_none_is_skipped(make_memory):
     sensor = ScriptedSensor([_obs("first"), None, _obs("third", app="Mail")])
     mem, be = make_memory(), FakeLLMBackend()
     _run(AgentLoop(_cfg(batch_size=1), mem, be, sensor), max_ticks=3)
-    assert mem.counts()["context"] == 2      # the None tick produced nothing
+    assert counts(mem)["context"] == 2      # the None tick produced nothing
     assert be.calls == 2
 
 
@@ -255,7 +259,7 @@ def test_metrics_reflect_a_run(make_memory):
     assert m.unchanged == 1        # the duplicate 'a'
     assert m.summarized == 2
     assert m.llm_calls == 2
-    assert loop_obj.drops_total == m.dropped == 0
+    assert loop_obj.metrics.dropped == m.dropped == 0
 
 
 # --- Phase 5: redaction is applied before memory (on by default) ------------ #
@@ -287,13 +291,13 @@ def test_backpressure_is_visible(make_memory):
     loop_obj = AgentLoop(_cfg(batch_size=1, queue_max=1), mem, SlowBackend(0.02), sensor)
     _run(loop_obj, max_ticks=10)
 
-    total = mem.counts()["context"]
+    total = counts(mem)["context"]
     dropped = mem._conn.execute(
         "SELECT count(*) FROM context WHERE skip_reason='dropped_backpressure'").fetchone()[0]
     summarized = mem._conn.execute(
         "SELECT count(*) FROM context WHERE summary_id IS NOT NULL").fetchone()[0]
-    assert loop_obj.drops_total > 0                         # the LLM fell behind
-    assert dropped == loop_obj.drops_total
+    assert loop_obj.metrics.dropped > 0                         # the LLM fell behind
+    assert dropped == loop_obj.metrics.dropped
     assert summarized + dropped == 10                       # every frame accounted for
     assert total == 10                                      # nothing silently lost
 
@@ -309,7 +313,7 @@ def test_slow_llm_does_not_stall_capture(make_memory):
     # big queue absorbed the burst; the slow consumer caught up during drain —
     # and the adaptive batch drain absorbed the backlog into FEWER LLM calls
     # (that's the capacity fix: batch size adapts to backlog).
-    assert mem.counts()["context"] == 8                    # all captures recorded
+    assert counts(mem)["context"] == 8                    # all captures recorded
     assert 1 <= be.calls < 8                               # batched, not per-event
 
 
@@ -321,7 +325,7 @@ def test_drains_on_stop(make_memory):
     mem, be = make_memory(), FakeLLMBackend()
     # a real (tiny) interval exercises the cadence-sleep path
     _run(AgentLoop(_cfg(batch_size=2, interval=0.005), mem, be, sensor), max_ticks=5)
-    assert mem.counts()["context"] == 5                    # nothing left unwritten
+    assert counts(mem)["context"] == 5                    # nothing left unwritten
 
 
 # --- janitor prunes at startup ---------------------------------------------- #

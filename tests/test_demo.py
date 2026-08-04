@@ -9,6 +9,10 @@ from cortana.config import Config
 from cortana.perception import Observation, make_demo_sensor
 
 
+from conftest import counts
+
+
+
 def test_demo_sensor_cycles_through_distinct_screens():
     sensor = make_demo_sensor()
     obs = [sensor(f"2026-07-03T00:00:0{i}+00:00") for i in range(4)]
@@ -30,7 +34,7 @@ def test_make_loop_runs_end_to_end_with_demo_sensor(tmp_path):
     loop_obj, mem = make_loop(cfg, sensor=make_demo_sensor())
     try:
         asyncio.run(loop_obj.run(max_ticks=6, install_signal_handlers=False))
-        assert mem.counts()["context"] > 0          # memory got populated
+        assert counts(mem)["context"] > 0          # memory got populated
         assert mem.recall()                         # and is queryable
     finally:
         mem.close()
@@ -58,6 +62,6 @@ def test_run_command_end_to_end_via_main(tmp_path):
     assert rc == 0
     mem = Memory(db)                     # _serve closed its handle; reopen to inspect
     try:
-        assert mem.counts()["context"] > 0
+        assert counts(mem)["context"] > 0
     finally:
         mem.close()
