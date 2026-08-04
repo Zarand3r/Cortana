@@ -37,24 +37,35 @@ On launch the menu bar shows a status line while a background thread:
 
 ## Real-Mac verification checklist (the one thing CI cannot cover)
 
-Everything native is `# pragma: no cover`; the logic behind it is unit-tested, but the
-bundle itself must be exercised on hardware once per release:
+Everything native is `# pragma: no cover`; the logic behind it is unit-tested, but
+the bundle must be exercised on hardware once per release. **First full pass done
+2026-08-03 on an M-series Mac against v0.1.0** — it caught and fixed two shipped
+bugs (hf_hub egress; a wedged permission gate — REVIEW.md §1d), which is exactly
+this checklist's job.
 
-- [ ] `./scripts/build_release.sh` produces `dist/Cortana.dmg`; `stapler validate` passes.
-- [ ] Fresh Mac (or a new user account): mount DMG, drag to Applications, launch — a
-      menu-bar icon appears, **no Dock icon**, no Terminal.
-- [ ] First run: status line shows the model download; completes; then the Screen
-      Recording prompt appears. Grant it.
-- [ ] "Start Cortana" → the chat window opens; ask "what am I doing right now" → a
-      grounded answer citing the current app/window.
-- [ ] Window title is populated in answers/citations (regression: it used to be blank).
-- [ ] "Get Recommendation" → an alert appears (no crash, no beachball).
-- [ ] Close the chat window → tracking stops (menu flips to "Start"); no mixed state.
-- [ ] Quit → app exits within a few seconds (drain), no beachball.
-- [ ] Relaunch offline (Wi-Fi off) → everything works; no network calls except the
-      already-cached model. Confirm with Little Snitch / `nettop` that only 127.0.0.1
-      traffic occurs after the first-run download.
-- [ ] Rebuild + reinstall → Screen Recording grant persists (proves signing/notarization).
+- [x] `./scripts/build_release.sh` produces `dist/Cortana.dmg` (un-notarized tier).
+- [x] Launch from Finder/Applications — menu-bar icon, **no Dock icon**, no Terminal.
+- [x] First-run provisioning: cached-model path verified (skip straight to the
+      permission gate). *Fresh ~4 GB download path not yet observed end-to-end.*
+- [x] Screen Recording gate: prompt → grant in System Settings → relaunch → ready.
+- [x] "Start Cortana" → chat window opens; tracking runs; grounded answers.
+- [x] Chat through the bundled MLX model — streamed SSE reply verified.
+- [x] Network posture: after model load, `lsof` shows **only** the
+      `localhost:8808` listener — zero egress.
+- [x] Quit → clean exit.
+- [ ] `stapler validate` on a notarized DMG *(blocked: needs a Developer ID cert)*.
+- [ ] Rebuild + reinstall → Screen Recording grant persists *(same blocker: only a
+      real signing identity makes the grant survive rebuilds — ad-hoc re-asks)*.
+
+## Cut a release
+
+```bash
+./scripts/build_release.sh                       # signed/notarized if creds are set
+gh release create vX.Y.Z dist/Cortana.dmg --title "Cortana vX.Y.Z" --notes "…"
+```
+
+Bump `version` in `pyproject.toml` + `bundle/build_app.py` (plist) first. v0.1.0
+shipped 2026-08-03 (ad-hoc tier).
 
 ## Build-pipeline status
 

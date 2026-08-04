@@ -152,6 +152,21 @@ running the build. Every finding verified against source before fixing.
 - Still requires a real signed run + GUI session (docs/PRODUCTION.md checklist):
   notarization acceptance, TCC grant flow, live MLX inference, menu interactions.
 
+## 1d. On-device verification pass (2026-08-03, v0.1.0)
+
+Method: run the built `.app` on real hardware and *observe* it (lsof, process
+inspection, live chat, the actual TCC flow) — the layer no hermetic test or code
+review can reach. Two shipped bugs found and fixed:
+
+| # | Sev | Finding | Fix |
+|---|---|---|---|
+| 44 | **P1** (privacy) | **The app phoned home with the model fully cached.** `lsof` on the running app showed three outbound HTTPS connections (huggingface.co via AWS/CloudFront): every lazy `mlx_lm.load` revalidates the cached model against the Hub — violating "the first-run download is the ONE network exception". | `runtime.enforce_offline()` (`HF_HUB_OFFLINE=1` + telemetry off), set synchronously at launch when the model is cached and right after a fresh download otherwise. Re-verified live: after a model load the app's only socket is the `localhost:8808` listener. (PR #10) |
+| 45 | **P0** (first-run) | **The Screen Recording gate could never pass.** pyobjc's `Quartz` module does not bind `CGPreflightScreenCaptureAccess`/`CGRequestScreenCaptureAccess`; the fail-soft wrapper swallowed the `AttributeError` into a permanent "not granted" — setup wedged regardless of what the user granted. Undetectable in CI (the whole path is native); undetected by both reviewers (plausible-looking API). | Call CoreGraphics directly via ctypes (the repo's existing pattern for `IsSecureEventInputEnabled`). Verified on device through the full grant → relaunch → ready → tracking flow. (PR #11) |
+
+Also learned on device (process, not code): hot-patching a built bundle breaks its
+code-signature seal and silently divorces it from its TCC grant — fixes must go
+through a rebuild, never an in-place edit of a bundle a user has granted.
+
 ## 3. Remaining recommendations (not done — prioritized)
 
 1. **(P1) Surface tracking-thread death in the menu.** If the loop crashes (e.g.
