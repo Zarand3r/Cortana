@@ -1,8 +1,10 @@
 """Runtime configuration for the Cortana agent.
 
-In-code defaults are authoritative (the agent runs with zero config). A top-level
-``config/cortana.toml`` overrides them; missing or partial files fall back to the
-defaults. TOML is read with the stdlib ``tomllib`` (Python 3.11+) — no dependency.
+In-code defaults are authoritative (the agent runs with zero config). Overrides,
+first match wins: ``~/.config/cortana/cortana.toml`` (user-editable, survives .app
+updates) → the repo's ``config/cortana.toml`` → the app bundle's ``Resources/``.
+Missing or partial files fall back to the defaults. TOML is read with the stdlib
+``tomllib`` (Python 3.11+) — no dependency.
 """
 
 from __future__ import annotations

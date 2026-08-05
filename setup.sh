@@ -80,6 +80,6 @@ Run the real menu-bar app:
 
 First launch: System Settings → Privacy & Security → Screen Recording → enable
 your terminal (or Cortana.app), then relaunch. Nothing leaves your machine.
-Build a standalone app:  ./.venv/bin/python packaging/build_app.py py2app
+Build the distributable app:  ./scripts/build_release.sh
 EOF
 fi

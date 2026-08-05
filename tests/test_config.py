@@ -36,12 +36,18 @@ def test_user_config_takes_precedence(tmp_path, monkeypatch):
     assert cfg.interval == 42.0
 
 
-def test_no_user_config_falls_through_to_repo_default(tmp_path, monkeypatch):
+def test_no_user_config_falls_through_to_next_candidate(tmp_path, monkeypatch):
+    # With no user-level file, load() must actually READ the next candidate — use a
+    # sentinel value the in-code defaults don't have, so a broken fall-through
+    # (returning bare defaults) fails loudly instead of passing by coincidence.
+    from cortana import config as config_mod
     home = tmp_path / "empty-home"
     home.mkdir()
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
-    cfg = Config.load()                       # repo config/cortana.toml (or defaults)
-    assert cfg.interval == Config().interval  # matches — the two are kept identical
+    repo_toml = tmp_path / "repo.toml"
+    repo_toml.write_text("[perception]\ninterval = 99.5\n")
+    monkeypatch.setattr(config_mod, "DEFAULT_CONFIG_PATH", repo_toml)
+    assert Config.load().interval == 99.5
 
 
 def test_from_toml_overrides_only_present_keys(tmp_path):

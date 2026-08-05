@@ -56,9 +56,17 @@ def enforce_offline() -> None:
     process. Called the moment the model is confirmed in the local cache: without
     it, every ``mlx_lm.load`` revalidates the cached model against huggingface.co
     over HTTPS — real egress, observed live via lsof, violating the 'first-run
-    download is the ONE network exception' promise."""
+    download is the ONE network exception' promise.
+
+    The env vars alone are NOT enough on the first-run path: huggingface_hub
+    freezes them into module constants at import time, and ``ensure_model`` has
+    already imported it to download — so patch the live module too."""
     os.environ["HF_HUB_OFFLINE"] = "1"
     os.environ["HF_HUB_DISABLE_TELEMETRY"] = "1"
+    constants = getattr(sys.modules.get("huggingface_hub"), "constants", None)
+    if constants is not None:                    # already imported (post-download)
+        constants.HF_HUB_OFFLINE = True
+        constants.HF_HUB_DISABLE_TELEMETRY = True
 
 
 def hf_cache_dir() -> Path:

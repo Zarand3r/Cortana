@@ -23,8 +23,8 @@ export NOTARY_PROFILE="cortana-notary"   # see the script header for store-crede
 
 The script: clean venv → `pip install '.[desktop,mlx,build]'` → py2app → `codesign`
 (hardened runtime + `bundle/entitlements.plist`) → `create-dmg` → `notarytool
-submit --wait` → `stapler staple`. Without `SIGN_ID`/`NOTARY_PROFILE` it stops early
-with an unsigned/un-notarized bundle (fine for local use).
+submit --wait` → `stapler staple`. Without `SIGN_ID`/`NOTARY_PROFILE` it skips the
+signing/notarization steps and still produces an unsigned DMG (fine for local use).
 
 ## First-run behavior (built in)
 
@@ -80,7 +80,6 @@ with a real certificate — expect at most one iteration there.
 Config resolution in the shipped app: `~/.config/cortana/cortana.toml` (user-editable,
 survives updates) → the bundle's `Resources/cortana.toml` → in-code defaults.
 
-## Known follow-ups (not blockers, tracked in REVIEW.md §3)
+## Known follow-ups (not blockers)
 
-- App icon (`.icns`) not yet set — bundle uses the default.
 - `create-dmg` styling (icon layout) unverified; the `hdiutil` fallback always works.
