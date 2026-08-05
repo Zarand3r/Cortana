@@ -1,11 +1,11 @@
 # Cortana Desktop App (menu-bar) — design & build
 
-> Status: **runs from source; the `.app` build pipeline is validated end-to-end**
-> (`./scripts/build_release.sh` builds the bundle and boots it through a headless
-> self-check on a real Mac — see `docs/PRODUCTION.md`). Signing/notarization and
-> the interactive GUI checklist still require a Developer ID + a GUI session. The
-> testable core (`DesktopController`) is fully covered; the rumps/pywebview/asyncio
-> shell is native and marked `# pragma: no cover`. Governed by `STYLE.md`.
+> Status: **shipped and verified on device** (v0.1.0: build pipeline, first-run
+> flow, live tracking, chat, and network posture all exercised on real hardware —
+> `docs/PRODUCTION.md` has the checklist). Notarization still awaits a Developer
+> ID cert. The testable core (`DesktopController`) is fully covered; the
+> rumps/pywebview/asyncio shell is native and marked `# pragma: no cover`.
+> Governed by `STYLE.md`.
 
 ## Why a desktop app
 
@@ -69,8 +69,8 @@ tab via `webbrowser.open` — simpler but not a native window.)
 ./.venv/bin/python -m cortana desktop
 ```
 
-Grant **Screen Recording** (and **Accessibility** if using `--read-focused-text`) to
-the launching app in System Settings → Privacy & Security, then restart it.
+Grant **Screen Recording** to the launching app in System Settings → Privacy &
+Security, then restart it.
 
 ## Build the `.app`
 
@@ -90,17 +90,14 @@ Full pipeline + real-Mac verification checklist: [`PRODUCTION.md`](PRODUCTION.md
 Unsigned bundles still work locally, but the Screen Recording grant can reset on
 each rebuild.
 
-### Known gotchas to verify
-- **Resource paths in a bundle.** `chatapp.INDEX_PATH` and `Config.DEFAULT_CONFIG_PATH`
-  resolve relative to the source tree; inside a py2app bundle the layout differs. The
-  `setup.py` ships them as `resources`, but the lookup may need a bundle-aware path
-  (`sys.frozen` / `NSBundle.resourcePath`). Verify the chat UI loads from the built app.
-- **Screen Recording key.** We capture via `CGWindowListCreateImage` (no usage-string
-  key needed). If we migrate to ScreenCaptureKit (Phase 7), add
-  `NSScreenCaptureUsageDescription` to the plist.
-- **Subprocess Python in a bundle.** `open_chat_window` spawns `sys.executable -m
-  cortana chat-window`; in a frozen app `sys.executable` is the bundle binary — confirm
-  the `chat-window` entry dispatches there, or embed the window differently.
+### Formerly-open gotchas (all resolved & verified on device)
+- **Resource paths in a bundle** — chat UI loads via `importlib.resources`; config
+  resolves through bundle-aware candidates (`config._default_config_candidates`).
+- **Screen Recording** — requested via `CGRequestScreenCaptureAccess` (ctypes;
+  pyobjc doesn't bind it — REVIEW.md #45). No plist usage-string needed for
+  `CGWindowListCreateImage`.
+- **Subprocess in a bundle** — `sys.executable` is py2app's plain interpreter, so
+  the spawn exports the parent's `sys.path` via PYTHONPATH (REVIEW.md #35).
 
 ## Out of scope (now)
 - Auto-launch at login (a LaunchAgent for the menu-bar app is a small follow-up;

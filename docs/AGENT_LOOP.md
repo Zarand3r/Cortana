@@ -1,9 +1,10 @@
 # Agent Loop (Phase 3) — design & scaling path
 
-> Status: **design, pre-implementation.** Companion to `docs/DESIGN.md` (Phase 3).
-> Captures the v1 loop topology and — the focus of this doc — **how it extends to
-> multiple producers and consumers** if/when perception or processing grows. Nothing
-> here is built yet; decisions marked *(proposed)* are open for review.
+> Status: **shipped — historical design record** (the loop lives in
+> `cortana/agent.py`; since this was written it also gained adaptive batch
+> draining, a shared `WorkingMemory`, an opt-in embedder on the write path, and
+> wall-clock auto-consolidation). Kept for the scaling rationale — **how the loop
+> extends to multiple producers/consumers** if perception or processing grows.
 
 Governed by `STYLE.md` (simple design, no speculative generality). The guiding
 rule: **build the 1+1 loop now; preserve the seams that make the multi-worker
@@ -161,10 +162,13 @@ path are built in from the start.
 
 Each step is additive and gated by a *real* need — none is built ahead of time.
 
-## 8. Out of scope / explicitly NOT built now (YAGNI)
+## 8. Out of scope / explicitly NOT built (YAGNI) — updated post-ship
 
-- The `Sensor` ABC, `Observation.source`, and any non-screen sensor.
-- A consumer pipeline / stages (no embeddings yet — that's Phase 7).
-- An `asyncio` orchestrator (plain threads until proven insufficient).
+- Any non-screen sensor (the injected-callable seam covers future ones).
 - Identical worker pools of either role (no win on one machine — §6).
 - Distributed / multi-machine anything (Cortana is single-user, on-device by design).
+
+*(Two items originally listed here were later built when a concrete need arrived,
+exactly as this doc prescribed: the loop IS the asyncio orchestrator with
+single-worker executors, and embeddings ARE wired into the write path behind
+`embed=true`.)*

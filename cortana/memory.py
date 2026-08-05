@@ -1,7 +1,7 @@
 """Memory — tiered episodic + semantic memory over SQLite.
 
 Episodic = per-perception `context` rows; semantic = `summaries` rows referenced
-once via FK (P1). `recall()` searches via FTS5 (P5); `prune()`/`forget()` bound
+once via FK (P1). `recall()` searches via FTS5 (P5); `prune()` bounds
 growth (P4). FTS mirrors `context` exactly, including after deletes (P2).
 
 Pure stdlib (sqlite3) — imports with no native deps (P7).

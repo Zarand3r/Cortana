@@ -58,13 +58,15 @@ Then: menu-bar icon → **Start Cortana** → the chat window opens and tracking
 ## Try it in 30 seconds (no deps, no model)
 
 The whole pipeline runs against a synthetic screen + a fake model, so you can see
-perceive → remember → recall/chat without installing anything or granting permissions:
+perceive → remember → recall/chat without installing anything or granting
+permissions. Needs **Python 3.11+** (`brew install python3` if your `python3` is
+older):
 
 ```bash
-python -m cortana run  --backend fake --demo --ticks 20 --db /tmp/cortana.db   # fill memory
-python -m cortana ask  "what was I working on" --backend fake --db /tmp/cortana.db
-python -m cortana recommend --backend fake --db /tmp/cortana.db                 # a suggestion
-python -m cortana chat --backend fake --db /tmp/cortana.db                      # open http://127.0.0.1:8808
+python3 -m cortana run  --backend fake --demo --ticks 20 --db /tmp/cortana.db   # fill memory
+python3 -m cortana ask  "what was I working on" --backend fake --db /tmp/cortana.db
+python3 -m cortana recommend --backend fake --db /tmp/cortana.db                # a suggestion
+python3 -m cortana chat --backend fake --db /tmp/cortana.db                     # open http://127.0.0.1:8808
 ```
 
 ## Install & run it for real (menu-bar app)
@@ -101,8 +103,8 @@ Cortana is a normal Python package, so there are three ways to hand it off:
 #    they:  pip install 'cortana-0.1.0-py3-none-any.whl[desktop]'
 
 # 3. Build the double-clickable menu-bar .app (the single-artifact product):
-./scripts/build_release.sh        # -> dist/Cortana.app (unsigned local build)
-#    with SIGN_ID + NOTARY_PROFILE set -> dist/Cortana.dmg, notarized for anyone
+./scripts/build_release.sh        # -> dist/Cortana.dmg (unsigned local build)
+#    with SIGN_ID + NOTARY_PROFILE set, the same DMG comes out notarized
 ```
 
 Do **not** run py2app by hand — the release script performs required post-build
@@ -118,11 +120,13 @@ The menu-bar app composes these; each is also a CLI facet (handy for testing):
 | `cortana run` | the perceive→remember loop (`--demo` for a synthetic sensor, `--ticks N` to bound it) |
 | `cortana ask "<q>"` | recall + reason over memory, with citations (read-only) |
 | `cortana recommend` | one grounded suggestion from recent activity |
+| `cortana digest` | consolidate recent episodes into a durable reflection |
 | `cortana chat` | the memory-backed chat web UI |
 | `cortana desktop` | the unified menu-bar app (default when no command is given) |
 
-Configuration lives in [`config/cortana.toml`](config/cortana.toml) (in-code defaults
-are authoritative; the TOML overrides them). Common flags: `--config`, `--backend
+Configuration: in-code defaults are authoritative; overrides load from
+`~/.config/cortana/cortana.toml` first (survives app updates), else the repo's
+[`config/cortana.toml`](config/cortana.toml). Common flags: `--config`, `--backend
 ollama|mlx|fake`, `--model`, `--db`, `--interval`, `--no-redact`.
 
 ## Design & development

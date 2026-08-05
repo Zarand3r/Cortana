@@ -419,6 +419,13 @@ def run_app(cfg) -> int:  # pragma: no cover - native menu-bar app (rumps)
                 self.toggle_item.title = controller.label()
 
         def _recommend(self, _):
+            if not ready.is_set():
+                # Same gate as Start: a recommendation would lazy-load the model,
+                # racing the first-run download (silent multi-minute block +
+                # duplicate hub requests).
+                rumps.alert(title="Cortana",
+                            message="Still getting ready — check the status line.")
+                return
             controller.recommend()
 
         def _quit(self, _):

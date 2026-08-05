@@ -29,9 +29,10 @@ Cortana is a perceptual agent, so memory is the product, not a feature. Principl
 | **Working (short-term) memory** | working memory | `WorkingMemory` — bounded in-RAM deque of recent *changed* observations | the recent session (rolling, `working_memory_max=200` distinct activities, ~1–2 MB RAM) | `working_memory.py` |
 | **Long-term — episodic** | episodic memory | SQLite `context` table (per-perception rows) | days (retention: 90d / 2 GB) | `memory.py` |
 | **Long-term — semantic** | semantic memory | SQLite `summaries` table (one LLM summary per batch, FK-referenced) | days (same retention) | `memory.py` |
+| **Long-term — vectors** | semantic retrieval | SQLite `embeddings` table (one vector per OCR-bearing row, `ON DELETE CASCADE`; opt-in `embed=true`) | days (same retention) | `memory.py` + `embeddings.py` |
+| **Reflections** | consolidated insight | SQLite `reflections` table — daily auto-consolidated digests, injected into answer prompts | `retention_days` | `consolidation.py` |
 
-We do **not** yet have: *procedural* memory (learned skills), a *reflection/
-consolidation* layer, or *semantic (vector) retrieval*. See §8–§9.
+The only classical tier we do **not** have is *procedural* memory (learned skills).
 
 ---
 
@@ -67,7 +68,7 @@ rows. Episodic rows are the *what/when/where*; the summary is the *meaning*.
 
 ```
 every ~interval (1s by default), serially:
-  perceive()  → Observation (app, title, screenshot→OCR text)   [perception.py]
+  ScreenSensor → Observation (app, title, screenshot→OCR text)  [perception.py]
   redact()    → scrub secrets before anything is stored          [redaction.py]
   change-detect: content_hash(normalize(app,title,ocr))          [perception.py]
      unchanged?  → count it, store NOTHING  (compaction — see below)
@@ -126,9 +127,10 @@ Consumers:
 - **Chat** (`chatapp.py`) — the latest user turn drives `recall`; results are
   injected into the system prompt as context.
 
-**Important limitation:** even the FTS path orders by **recency, not relevance** — we
-do not currently rank by BM25 score or any semantic similarity. Retrieval is
-"keyword match, newest first." This is the single biggest gap vs the frontier (§9).
+**Limitation of the default path:** with `embed=false` (the default) the FTS path
+orders by **recency, not relevance** — "keyword match, newest first." With
+`embed=true` recall is hybrid (FTS rank + embedding cosine fused by RRF, §9);
+the keyword-only path ignoring BM25 rank remains a known gap (REVIEW.md §3).
 
 ---
 

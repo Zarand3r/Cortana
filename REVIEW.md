@@ -167,9 +167,28 @@ Also learned on device (process, not code): hot-patching a built bundle breaks i
 code-signature seal and silently divorces it from its TCC grant — fixes must go
 through a rebuild, never an in-place edit of a bundle a user has granted.
 
+## 1e. Final pre-publication review (2026-08-05)
+
+Two fresh-context reviewers over the post-pass-4 delta (bugs/complexity; docs +
+install UX as a new user). Notable:
+
+| Sev | Finding | Disposition |
+|---|---|---|
+| **P1** | **`enforce_offline()` was a no-op in the first-download session**: huggingface_hub freezes `HF_HUB_OFFLINE` into module constants at import time, and `ensure_model` imports it *before* the env vars are set — so the very session the offline promise was built for stayed online. (The cached-model path, which is what the on-device lsof check exercised, was correct — masking this.) | Fixed: `enforce_offline()` now also patches the live module's constants. Regression test with a stubbed module. |
+| P2 | "Get Recommendation" wasn't gated on `ready` — a click mid-download lazy-loads the model, silently blocking minutes and duplicating hub requests. | Fixed: same gate + alert as Start. (Pre-ready chat via a hand-typed URL remains possible — accepted; hf file locks prevent cache corruption.) |
+| P2 | User-level `~/.config/cortana/cortana.toml` silently shadowed the repo config with no doc/log trail; one config test was tautological (passed even if fall-through was broken). | Docs corrected (config.py docstring, README); test rewritten around a sentinel value. |
+| P0 (docs) | README demo commands used `python` (absent on stock macOS) with no 3.11+ note — the first thing a new user runs would die cryptically. | `python3` + explicit requirement. |
+| P1 (docs) | `setup.sh` printed a build command pointing at a deleted path (`packaging/`) that also produces a broken bundle; AGENT_LOOP.md/MEMORY.md claimed shipped features (asyncio loop, embeddings, consolidation, hybrid recall) "not built yet"; DESKTOP.md referenced the removed `--read-focused-text`. | All corrected; AGENT_LOOP.md re-headered as a shipped historical record (DESIGN.md pattern). |
+
+Verified clean by the same pass: frozen-bundle config path resolution, ctypes TCC
+calls, PYTHONPATH child spawn, `set -e` behavior of the signing loop, icon/build
+config, the dead-code prune (zero dangling code references), and the four install
+paths (each distinct-audience; demo pipeline runs green on bare Python 3.11+).
+
 ## 3. Remaining recommendations (not done — prioritized)
 
-1. **(P1) Surface tracking-thread death in the menu.** If the loop crashes (e.g.
+1. ~~**(P1) Surface tracking-thread death in the menu.**~~ **DONE** (#22/#23 —
+   crash badge + health predicate). If the loop crashes (e.g.
    prune raises on a locked DB near the 2 GiB cap), the thread dies silently while
    the menu still shows "⏸ Stop Tracking". Wrap `_TrackingService._run` and flip the
    controller state + a menu badge on failure. *(Small; needs a Mac to verify the
@@ -178,7 +197,7 @@ through a rebuild, never an in-place edit of a bundle a user has granted.
    `consolidation`/`chatapp` each format `[{ts}] app=…: body` with drifted caps
    (400 vs 300 chars) and empty-case handling. One `format_memory_lines(memories,
    cap)` helper ends the drift.
-3. **(P2) Auto-schedule consolidation.** `cortana digest` is manual; run it from the
+3. ~~**(P2) Auto-schedule consolidation.**~~ **DONE** (#28 — wall-clock due-check). `cortana digest` is manual; run it from the
    loop's `_maintenance` daily so reflections accumulate without user action.
 4. **(P2) Keyword-only recall ignores BM25 rank** (`ORDER BY ts DESC` even under
    `MATCH`). Fine for recency-flavored use; hybrid path ranks properly. Consider
@@ -188,7 +207,8 @@ through a rebuild, never an in-place edit of a bundle a user has granted.
    freelist_count`, and account for embeddings JSON (~15 KB/row) in the average.
 6. **(P2) Embeddings lack a model tag.** #4 makes a model switch *loud*; a `model`
    column + filter (or a re-index command) would make it *seamless*.
-7. **(P3) Dead code sweep:** `Memory.forget`/`counts` (test-only), `WorkingMemory.
+7. ~~**(P3) Dead code sweep:**~~ **DONE** (PR #14 — forget/counts/since/
+   drops_total/clear/perceive removed; docstrings fixed). `Memory.forget`/`counts` (test-only), `WorkingMemory.
    since`, `AgentLoop.drops_total`, `Conversation.clear` (no route exposes it) —
    keep-or-cut decision; stale docstrings (`cli.py` header lists 3 of 7 subcommands;
    `chatapp.py` still calls chat "a separate surface").

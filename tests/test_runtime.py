@@ -121,3 +121,19 @@ def test_explicit_mlx_backend_gets_mlx_model_even_from_source(monkeypatch):
     cfg.backend = "mlx"                                # user chose mlx, left model default
     runtime.apply_production_defaults(cfg)
     assert cfg.model == runtime.DEFAULT_MLX_MODEL      # swapped to a loadable repo id
+
+
+def test_enforce_offline_patches_already_imported_hub(monkeypatch):
+    # huggingface_hub freezes the env vars into module constants AT IMPORT TIME —
+    # on the first-run path ensure_model imports it before enforce_offline runs,
+    # so setting os.environ alone leaves the session online. The live module's
+    # constants must be patched too.
+    import sys
+    import types
+    fake_constants = types.SimpleNamespace(HF_HUB_OFFLINE=False,
+                                           HF_HUB_DISABLE_TELEMETRY=False)
+    fake_hub = types.SimpleNamespace(constants=fake_constants)
+    monkeypatch.setitem(sys.modules, "huggingface_hub", fake_hub)
+    runtime.enforce_offline()
+    assert fake_constants.HF_HUB_OFFLINE is True
+    assert fake_constants.HF_HUB_DISABLE_TELEMETRY is True
