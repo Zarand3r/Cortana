@@ -131,7 +131,8 @@ ollama|mlx|fake`, `--model`, `--db`, `--interval`, `--no-redact`.
 
 ## Design & development
 
-- Architecture and phase roadmap: [`docs/DESIGN.md`](docs/DESIGN.md)
+- Architecture and phase roadmap: [`docs/DESIGN.md`](docs/DESIGN.md) ·
+  productivity coach design: [`docs/PRODUCTIVITY.md`](docs/PRODUCTIVITY.md)
 - Agent loop internals: [`docs/AGENT_LOOP.md`](docs/AGENT_LOOP.md) ·
   chat: [`docs/CHAT.md`](docs/CHAT.md) · desktop: [`docs/DESKTOP.md`](docs/DESKTOP.md)
 - Conventions: [`STYLE.md`](STYLE.md) · agent instructions: [`CLAUDE.md`](CLAUDE.md)
