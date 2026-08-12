@@ -1,4 +1,4 @@
-# Cortana — the AI assistant that actually knows what you're doing
+# Cortana — 100% local AI assistant that actually knows what you're doing. No data leaves your computer!
 
 Every AI assistant you've used starts every conversation blind. You paste context,
 re-explain your project, describe what's on your screen. **Cortana never asks —
